@@ -19,8 +19,9 @@ HELP = ('Usage: tochtml <url> <key>\n'
         '<url>      - accepts youtube and facebook video url\n'
         '<key>      - where to store url data.  Leaving this argument blank will display choices\n' 
         'list       - displays current json data\n'
+        'blank      - sets empty strings to data in a key\n'
         'build      - creates an html document titled \'site_code_<timestamp>.txt\' containing current youtube links\n'
-        'facebook iframes will be automatically updated in the file \'fb_iframe.txt\' and do not require a <category>\n'
+        'facebook iframes will be automatically updated in the file \'fb_iframe.txt\' and do not require a <key>\n'
 )
 PATH = os.path.dirname(os.path.realpath(sys.argv[0])) + '\\'
 DESKTOP = 'C:' + os.environ["HOMEPATH"] + '\\Desktop\\'
@@ -62,20 +63,24 @@ def get_inputs(links):
         sys.exit(print_json_list(links))
     elif arg1 == 'build':
         build(links)
+        
     elif arg1.startswith('https://www.youtube.com'):
         arg1 = format_short(arg1)
-    if arg1.startswith('https://youtu.be'):
-        if arg2 is None or arg2 not in links.keys():
-            while arg2 not in links.keys(): 
-                for key in links.keys():
-                    print(f'  {key}')
-                arg2 = input('Please choose a key from the above list. Type \'exit\' to exit: ')
-                if arg2.lower() == 'exit':
-                    sys.exit()
     elif arg1.startswith('https://www.facebook.com'):
         arg2 = 'fb'
-    else:
-        sys.exit(HELP)
+    elif arg1.startswith('www'):
+        arg1 = 'https://' + arg1
+    elif arg1 == 'blank':
+        arg1 =''
+    if arg2 is None or arg2 not in links.keys():
+        while arg2 not in links.keys(): 
+            for key in links.keys():
+                print(f'  {key}')
+            arg2 = input('Please choose a key from the above list. Type \'exit\' to exit: ')
+            if arg2.lower() == 'exit':
+                sys.exit()
+    if not arg1.startswith('https://'):
+        sys.exit('Error, target must be a valid url.\n' + HELP)
     return arg1, arg2
 
 def update_links(links, args):
@@ -84,31 +89,60 @@ def update_links(links, args):
     code = get_id(link)
     timestamp = dt.datetime.now().strftime('%m/%d/%Y %H:%M:%S')
     links[key]['link'] = link
-    links[key]['stamp'] = timestamp
-    links[key]['id'] = code
-    links[key]['name'] = get_name(link)
-    links[key]['date'] = get_date(link)
-    links[key]['thumb'] = get_thumb(link, code)
-    links[key]['embed'] = format_embed(link, code)
+    links[key]['name'] = get_name(link, key)
+    if links['elem']['link'] == '':
+        links['kids']['title'] = 'KIDS COMMUNITY VIDEO'
+    else:
+        links['kids']['title'] = 'PRESCHOOL / KINDER VIDEO'
+    try:
+        links[key]['stamp'] = timestamp
+    except:
+        links[key]['stamp'] = ''
+    try:
+        links[key]['id'] = code
+    except:
+        links[key]['id'] = ''
+        
+    try:
+        links[key]['date'] = get_date(link)
+    except:
+        links[key]['date'] = ''
+    try:
+        links[key]['thumb'] = get_thumb(link, code)
+    except:
+        links[key]['thumb'] = ''
+    try:
+        links[key]['embed'] = format_embed(link, code)
+    except:
+        links[key]['embed'] = ''
     return links
 
 def get_id(link):
     code = link.split('/')[-1]
     return code
 
-def get_name(link):
+def get_name(link, key):
     # Can get a lot of other metadata from this if needed
     name = ''
     #try:
-    if link.startswith('https://y'): # If YouTube video
+    if link.startswith('https://youtu.be'):
         params = {'format': 'json', 'url': link}
         url = 'https://www.youtube.com/oembed'
         query_string = urllib.parse.urlencode(params)
         url = url + '?' + query_string
         with urllib.request.urlopen(url) as response:
             response_text = response.read()
-            data = json.loads(response_text.decode())     
+            data = json.loads(response_text.decode())
         name = data['title']
+
+    elif key == 'kids':
+        name = 'Watch with your kids... this is fun.'
+    elif key == 'elem':
+        name = 'This one is for the big kids.'
+    elif key == 'ms':
+        name = 'A video for the preteen audience'
+    else:
+        name = ''
     #except:
     # TODO get except name
     #    pass 
@@ -159,11 +193,13 @@ def format_short(url):
     return 'https://youtu.be/' + slug
 
 def format_embed(link, code):
-    if link.startswith('https://y'):
+    if link.startswith('https://youtu.be'):
         embed = 'https://www.youtube.com/embed/' + code
-    else:
+    elif link.startswith('https://www.facebook.com'):
         page = link.split('/')[-3]
         embed = 'https://www.facebook.com/plugins/video.php?href=https%3A%2F%2Fwww.facebook.com%2F' + page + '%2Fvideos%2F' + code + '&amp'
+    else:
+        embed =''
     return embed
 
 def build(links):
@@ -177,9 +213,10 @@ def build(links):
         html += links['main']['link']
         keys = ['kids', 'elem', 'ms']
         for key in keys:
-            html += '\n\n'
-            html += links[key]['title'] + '\n'
-            html += links[key]['link']
+            if not links[key]['link'] == '':
+                html += '\n\n'
+                html += links[key]['title'] + '\n'
+                html += links[key]['link']
 
         # Welcome page
         html += '\n\n\n== WELCOME PAGE ==\n\n'
@@ -192,20 +229,8 @@ def build(links):
         html += build_video_html('main', links, 734, 415)
         keys = ['kids', 'elem', 'ms']
         for key in keys:
-            link = links[key]['link']
-            html += '<p style="font-size: 1.8301em;"><a href="'
-            html += link
-            html += '" data-location="external" data-detail="'
-            html += link
-            html += '" data-category="link" target="_blank" class="cloverlinks">'
-            html += links[key]['title']
-            html += '</a></p>\n'
-            html += '<p><a href="'
-            html += link
-            html += '" data-location="external" data-detail="'
-            html += link
-            html += '" data-category="link" target="_blank" class="cloverlinks">Click here</a></p>'
-            html += '<p><br></p>\n'
+            if not links[key]['link'] == '':
+                html += build_video_link(key, links)
 
         # Past online services
         html += '\n\n\n== PAST ONLINE SERVICES ==\n\n'
@@ -245,16 +270,45 @@ def build(links):
     return
 
 def build_video_html(key, links, w, h):
-    html = build_iframe(key, links, w, h) + '\n'
-    html += '<p style="font-size: 1.8301em;">' + links[key]['title'] + '</p>\n'
-    html += '<p>' + links[key]['name'] + '</p>\n'
-    html += '<p><br></p><p><br></p><p><br></p>\n'
+    link = links[key]['link']
+    title = links[key]['title']
+    if not link == '':
+        if link.startswith('https://youtu.be'):
+            html = build_iframe(key, links, w, h) + '\n'
+            html += '<p style="font-size: 1.8301em;">' + title + '</p>\n'
+            html += '<p>' + links[key]['name'] + '</p>\n'
+            html += '<p><br></p><p><br></p><p><br></p>\n'
+        else:
+            html = build_video_link(key, links)
+    else:
+        html =''
     return html
 
 def build_iframe(key, links, w, h):
-    html = '<iframe width="'+ str(w) +'" height="'+ str(h) +'" src="'
-    html += links[key]['embed']
-    html +='" frameborder="0" allow="accelerometer; autoplay; encrypted-media; gyroscope; picture-in-picture" allowfullscreen=""></iframe>'
+    if not links[key]['embed'] == '':
+        html = '<iframe width="'+ str(w) +'" height="'+ str(h) +'" src="'
+        html += links[key]['embed']
+        html +='" frameborder="0" allow="accelerometer; autoplay; encrypted-media; gyroscope; picture-in-picture" allowfullscreen=""></iframe>'
+    else:
+        html =''
+    return html
+
+def build_video_link(key, links):
+    link = links[key]['link']
+    title = links[key]['title']
+    html = '<p style="font-size: 1.8301em;"><a href="'
+    html += link
+    html += '" data-location="external" data-detail="'
+    html += link
+    html += '" data-category="link" target="_blank" class="cloverlinks">'
+    html += title
+    html += '</a></p>\n'
+    html += '<p><a href="'
+    html += link
+    html += '" data-location="external" data-detail="'
+    html += link
+    html += '" data-category="link" target="_blank" class="cloverlinks">Click here</a></p>'
+    html += '<p><br></p>\n'
     return html
 
 def download_thumb(key, thumb):
