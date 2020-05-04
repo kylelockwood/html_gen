@@ -24,14 +24,17 @@ HELP = ('Usage: tochtml <url> <key>\n'
         'facebook iframes will be automatically updated in the file \'fb_iframe.txt\' and do not require a <key>\n'
 )
 PATH = os.path.dirname(os.path.realpath(sys.argv[0])) + '\\'
-DESKTOP = 'C:' + os.environ["HOMEPATH"] + '\\Desktop\\'
+OUTPATH = 'C:' + os.environ["HOMEPATH"] + '\\Desktop\\TOC LINKS\\'
 
 def main():
+    print('Loading data...')
     links = load_json(PATH + 'links.json')
     args = get_inputs(links)
+    print('Updating data...')
     links = update_links(links, args)
     if args[1] == 'fb':
         update_fb(links)
+    print('Saving data...')
     update_json(links, args[1])
 
 def print_json_list(json_dict):
@@ -63,7 +66,6 @@ def get_inputs(links):
         sys.exit(print_json_list(links))
     elif arg1 == 'build':
         build(links)
-        
     elif arg1.startswith('https://www.youtube.com'):
         arg1 = format_short(arg1)
     elif arg1.startswith('https://www.facebook.com'):
@@ -71,7 +73,7 @@ def get_inputs(links):
     elif arg1.startswith('www'):
         arg1 = 'https://' + arg1
     elif arg1 == 'blank':
-        arg1 =''
+        arg1 = None
     if arg2 is None or arg2 not in links.keys():
         while arg2 not in links.keys(): 
             for key in links.keys():
@@ -79,7 +81,7 @@ def get_inputs(links):
             arg2 = input('Please choose a key from the above list. Type \'exit\' to exit: ')
             if arg2.lower() == 'exit':
                 sys.exit()
-    if not arg1.startswith('https://'):
+    if arg1 and not arg1.startswith('https://'):
         sys.exit('Error, target must be a valid url.\n' + HELP)
     return arg1, arg2
 
@@ -88,6 +90,9 @@ def update_links(links, args):
     key = args[1]
     code = get_id(link)
     timestamp = dt.datetime.now().strftime('%m/%d/%Y %H:%M:%S')
+    if not link:
+        links = blank(key, links, timestamp)
+        return links
     links[key]['link'] = link
     links[key]['name'] = get_name(link, key)
     if links['elem']['link'] == '':
@@ -102,11 +107,20 @@ def update_links(links, args):
         links[key]['id'] = code
     except:
         links[key]['id'] = ''
-        
     try:
-        links[key]['date'] = get_date(link)
+        post_date = get_date(link)
+        links[key]['date'] = post_date
     except:
+        print('    No date data found.')
         links[key]['date'] = ''
+        links['service']['date'] = ''
+    try:
+        post_date = links['main']['date']
+        dt_date = dt.datetime.strptime(post_date, '%B %d, %Y')
+    except:
+        dt_date = dt.datetime.now()       
+    links['service']['date'] = get_sunday_date(dt_date)
+
     try:
         links[key]['thumb'] = get_thumb(link, code)
     except:
@@ -117,6 +131,15 @@ def update_links(links, args):
         links[key]['embed'] = ''
     return links
 
+def blank(key, links, timestamp):
+    yn = input(f'Remove data from \'{key}\'?  Y/N : ')
+    if yn.lower() == 'y':
+        for item in links[key]:
+            links[key][item] = ''
+        links[key]['stamp'] = timestamp
+    return links
+
+
 def get_id(link):
     code = link.split('/')[-1]
     return code
@@ -124,6 +147,7 @@ def get_id(link):
 def get_name(link, key):
     # Can get a lot of other metadata from this if needed
     name = ''
+    print('  Creating name...')
     #try:
     if link.startswith('https://youtu.be'):
         params = {'format': 'json', 'url': link}
@@ -151,6 +175,7 @@ def get_name(link, key):
 def get_date(link):
     # TODO rework this 
     date = ''
+    print('  Fetching date...')
     if link.startswith('https://y'):
         soup = get_meta(link)
         if soup:
@@ -165,6 +190,14 @@ def get_date(link):
             pass
     return date
 
+def get_sunday_date(stamp):
+    days_ahead = 6 - stamp.weekday() # 6 = Sunday
+    if days_ahead <= 0:
+        days_ahead += 7
+    sunday = stamp + dt.timedelta(days_ahead)
+    sunday = sunday.strftime('%B %d, %Y')
+    return sunday
+
 def get_thumb(link, slug):
     if link.startswith('https://y'):
         thumb = 'http://img.youtube.com/vi/' + slug + '/maxresdefault.jpg'
@@ -175,6 +208,7 @@ def get_thumb(link, slug):
     return thumb
 
 def get_permalink(link):
+    print('  Fetching permalink...')
     html = get_meta(link)
     perma = ''
     for lnk in html.find_all('meta'):
@@ -184,6 +218,7 @@ def get_permalink(link):
     return perma
 
 def get_meta(link):
+    print('  Processing metadata...')
     page = urllib.request.urlopen(link)
     soup = BeautifulSoup(page.read(), "html.parser")
     return soup
@@ -208,7 +243,7 @@ def build(links):
     yn = input('Y/N ')
     if yn.lower() == 'y':
         # FB Post
-        html = 'The Oregon Community Online\n'
+        html = 'The Oregon Community At Home\n'
         html += links['main']['name'] + '\n\n'
         html += links['main']['link']
         keys = ['kids', 'elem', 'ms']
@@ -235,15 +270,26 @@ def build(links):
         # Past online services
         html += '\n\n\n== PAST ONLINE SERVICES ==\n\n'
         html += '<p>Past Kid\'s Community videos can be found in the MEDIA/KIDS COMMUNITY tab or by clicking<a href="/media/kids-community-videos" data-location="existing" data-detail="/media/kids-community-videos" data-category="link" target="_self" class="cloverlinks"> HERE.</a></p><p><br></p><p><br></p>\n'
+        
+        # TODO video Title should be: Title - Date - Speaker
+        
         html += build_video_html('last', links, 560, 315)
 
         # Kids Community Videos
         html += '\n\n\n== KIDS COMMUNITY VIDEOS ==\n\n'
+        html += '<p>Here you will find videos for the Kid\'s Community and Middle School Ministry.&nbsp; Full online service videos can be found in the <a href="/media/online-services" data-location="existing" data-detail="/media/online-services" data-category="link" target="_self" class="cloverlinks">MEDIA/ONLINE SERVICES</a> tab</p><p><br></p><p><br></p><p><br></p>'
         keys = ['kids', 'elem', 'ms']
         for key in keys:
             html += build_video_html(key, links, 734, 415)
 
-        # Kids Community thumbs
+        # Past Kid's Videos
+        # TODO Test this
+        html += '\n\n\n== KIDS PAST VIDEOS ==\n\n'
+        keys = ['kids', 'elem', 'ms']
+        for key in keys:
+            html += build_past_kids(key, links)
+
+        # Kids Community thumbs (may not need this)
         html += '\n\n\n== KIDS COMMUNITY THUMBNAILS ==\n\n'
         for key in keys:
             html += links[key]['thumb'] + '\n'
@@ -251,7 +297,7 @@ def build(links):
         # Create output file
         timestamp = dt.datetime.now().strftime('%m%d%Y_%H%M%S')
         filename = timestamp +'_site_code.txt'
-        with open(DESKTOP + filename, 'w') as f:
+        with open(OUTPATH + filename, 'w') as f:
             f.writelines(html)
 
         print(f'\nFile \'{filename}\' sucessfully created.')
@@ -268,6 +314,23 @@ def build(links):
     else:
         sys.exit()
     return
+
+def build_past_kids(key, links):
+    # TODO TEST THIS
+    link = links['past'][key]['link']
+    title = links['past'][key]['title']
+    html = ''
+    if not link == '':
+        past_date = links['past']['date']
+        title = links[key]['title']
+        html += '<p>'
+        html += past_date
+        html += '</p><p><span class="clovercustom" style="font-size: 0.625em;">'
+        html += title
+        html += '</span></p>\n'
+        html += link
+        html += '\n\n'
+    return html
 
 def build_video_html(key, links, w, h):
     link = links[key]['link']
@@ -308,19 +371,17 @@ def build_video_link(key, links):
     html += '" data-location="external" data-detail="'
     html += link
     html += '" data-category="link" target="_blank" class="cloverlinks">Click here</a></p>'
-    html += '<p><br></p>\n'
+    html += '<p><br></p><p><br></p><p><br></p>\n'
     return html
 
 def download_thumb(key, thumb):
     timestamp = dt.datetime.now().strftime('%m%d%Y_%H%M%S')
     filename = timestamp + '_' + key + '_thumb.jpg'
     try:
-        urllib.request.urlretrieve(thumb, DESKTOP + filename)
+        urllib.request.urlretrieve(thumb, OUTPATH + filename)
         print(f'Thumbnail image \'{filename}\' successfully created.')
     except:
-        # TODO get except code
-        e = sys.exc_info()[0]
-        print(f'{e}. Failed to create \'{filename}\'.')
+        print(f'Failed to create thumbnail image \'{filename}\'.')
     return 
 
 def update_fb(links):
@@ -358,16 +419,29 @@ def build_fb_links(name, embed):
 
     # Update facebook html file
     filename = 'fb_iframe.txt'
-    with open(DESKTOP + filename, 'w') as f:
+    with open(OUTPATH + filename, 'w') as f:
         f.writelines(html)
     print(filename + ' updated.')
     return
 
 def update_last(links):
     timestamp = dt.datetime.now().strftime('%m/%d/%Y %H:%M:%S')
+    # TODO Title needs to be Name - Date - Speaker
+    title = ''
     if not links['last'] == links['main']:
         links['last'] = links['main']
         links['last']['stamp'] = timestamp
+        #links['last']['title'] = title
+        links = update_past(links)
+    return links
+
+def update_past(links):
+    links['past']['date'] = links['service']['date']
+    for key in links:
+        if key in links['past']:
+            links['past'][key]['link'] = links[key]['link']
+            links['past'][key]['title'] = links[key]['title']
+
     return links
 
 def update_json(updateDict, arg=None):
