@@ -16,15 +16,19 @@ import facebook
 # Alt+Shift+F or right-click in file, choose 'Format Document' to format json in VS Code
 
 HELP = ('Usage: tochtml <url> <key>\n'
-        '<url>      - accepts youtube and facebook video url\n'
-        '<key>      - where to store url data.  Leaving this argument blank will display choices\n' 
-        'list       - displays current json data\n'
-        'blank      - sets empty strings to data in a key\n'
-        'build      - creates an html document titled \'site_code_<timestamp>.txt\' containing current youtube links\n'
-        'facebook iframes will be automatically updated in the file \'fb_iframe.txt\' and do not require a <key>\n'
+        '  <url>       - accepts youtube and facebook video url\n'
+        '  <key>       - where to store url data.  Leaving this argument blank will display choices\n' 
+        '  list        - displays current json data\n'
+        '  blank       - sets empty strings to data in a key\n'
+        '  build       - creates an html document titled \'site_code_<timestamp>.txt\' containing current youtube links\n'
+        '  thumb <key> - downloads thumbnail image associated with <key>' # TODO
+        '  thumbs      - downloads ALL thumbnail images from videos in database\n'
+        '  facebook iframes will be automatically updated in the file \'fb_iframe.txt\' and do not require a <key>\n'
 )
 PATH = os.path.dirname(os.path.realpath(sys.argv[0])) + '\\'
 OUTPATH = 'C:' + os.environ["HOMEPATH"] + '\\Desktop\\TOC LINKS\\'
+
+# TODO Past updating is inconsistent.  Use 'date' attribute?
 
 def main():
     print('Loading data...')
@@ -66,6 +70,14 @@ def get_inputs(links):
         sys.exit(print_json_list(links))
     elif arg1 == 'build':
         build(links)
+    # TODO add thumb <key>
+    elif arg1 == 'thumbs':
+            for key in links:
+                try:
+                    download_thumb(key, links[key]['thumb'])
+                except:
+                    continue
+            sys.exit()
     elif arg1.startswith('https://www.youtube.com'):
         arg1 = format_short(arg1)
     elif arg1.startswith('https://www.facebook.com'):
@@ -74,15 +86,15 @@ def get_inputs(links):
         arg1 = 'https://' + arg1
     elif arg1 == 'blank':
         arg1 = None
-    if arg2 is None or arg2 not in links.keys():
+    elif arg1 and not arg1.startswith('https://'):
+        sys.exit('Error, target must be a valid url.\n' + HELP)
+    if arg2 is None or arg2 not in links.keys(): # TODO break this out into a functions so thumb <key> can use it too
         while arg2 not in links.keys(): 
             for key in links.keys():
                 print(f'  {key}')
             arg2 = input('Please choose a key from the above list. Type \'exit\' to exit: ')
             if arg2.lower() == 'exit':
                 sys.exit()
-    if arg1 and not arg1.startswith('https://'):
-        sys.exit('Error, target must be a valid url.\n' + HELP)
     return arg1, arg2
 
 def update_links(links, args):
@@ -139,7 +151,6 @@ def blank(key, links, timestamp):
         links[key]['stamp'] = timestamp
     return links
 
-
 def get_id(link):
     code = link.split('/')[-1]
     return code
@@ -147,33 +158,33 @@ def get_id(link):
 def get_name(link, key):
     # Can get a lot of other metadata from this if needed
     name = ''
-    print('  Creating name...')
-    #try:
-    if link.startswith('https://youtu.be'):
-        params = {'format': 'json', 'url': link}
-        url = 'https://www.youtube.com/oembed'
-        query_string = urllib.parse.urlencode(params)
-        url = url + '?' + query_string
-        with urllib.request.urlopen(url) as response:
-            response_text = response.read()
-            data = json.loads(response_text.decode())
-        name = data['title']
+    print(f'  Fetching name for \'{key}\'...')
+    try:
+        if link.startswith('https://youtu.be'):
+            params = {'format': 'json', 'url': link}
+            url = 'https://www.youtube.com/oembed'
+            query_string = urllib.parse.urlencode(params)
+            url = url + '?' + query_string
+            with urllib.request.urlopen(url) as response:
+                response_text = response.read()
+                data = json.loads(response_text.decode())
+            name = data['title']
 
-    elif key == 'kids':
-        name = 'Watch with your kids... this is fun.'
-    elif key == 'elem':
-        name = 'This one is for the big kids.'
-    elif key == 'ms':
-        name = 'A video for the preteen audience'
-    else:
-        name = ''
-    #except:
-    # TODO get except name
-    #    pass 
+        elif key == 'kids':
+            name = 'Watch with your kids... this is fun.'
+        elif key == 'elem':
+            name = 'This one is for the big kids.'
+        elif key == 'ms':
+            name = 'A video for the preteen audience'
+        else:
+            name = ''
+        print('    Sucessfully updated name.')
+    except Exception as e:
+        print(f'    Failed to fetch name. Error: {e}')
+        pass
     return name
 
 def get_date(link):
-    # TODO rework this 
     date = ''
     print('  Fetching date...')
     if link.startswith('https://y'):
@@ -242,6 +253,16 @@ def build(links):
     print_json_list(links)
     yn = input('Y/N ')
     if yn.lower() == 'y':
+        # One last check for missing names
+        keys = ['main', 'kids', 'elem', 'ms']
+        for key in keys:
+            if not links[key]['name']:
+                print(f'  Missing name \'{key}\'')
+                name = get_name(links[key]['link'], key)
+                if name:
+                    links[key]['name'] = name
+                else:
+                    print(f'    Warning, \'{key}\' is still missing attribute \'name\'')
         # FB Post
         html = 'The Oregon Community At Home\n'
         html += links['main']['name'] + '\n\n'
@@ -283,7 +304,6 @@ def build(links):
             html += build_video_html(key, links, 734, 415)
 
         # Past Kid's Videos
-        # TODO Test this
         html += '\n\n\n== KIDS PAST VIDEOS ==\n\n'
         keys = ['kids', 'elem', 'ms']
         for key in keys:
@@ -297,10 +317,12 @@ def build(links):
         # Create output file
         timestamp = dt.datetime.now().strftime('%m%d%Y_%H%M%S')
         filename = timestamp +'_site_code.txt'
-        with open(OUTPATH + filename, 'w') as f:
-            f.writelines(html)
-
-        print(f'\nFile \'{filename}\' sucessfully created.')
+        try:
+            with open(OUTPATH + filename, 'w') as f:
+                f.writelines(html)
+            print(f'\nFile \'{filename}\' sucessfully created.')
+        except:
+            print(f'\'{filename}\' could not be created.')
 
         keys = ['main', 'kids', 'elem', 'ms', 'last']
         for key in keys:
@@ -310,13 +332,12 @@ def build(links):
         # Update json
         links = update_last(links)
         update_json(links, None)
-
+        print(f'Build {timestamp} complete.')
     else:
         sys.exit()
     return
 
 def build_past_kids(key, links):
-    # TODO TEST THIS
     link = links['past'][key]['link']
     title = links['past'][key]['title']
     html = ''
@@ -379,9 +400,9 @@ def download_thumb(key, thumb):
     filename = timestamp + '_' + key + '_thumb.jpg'
     try:
         urllib.request.urlretrieve(thumb, OUTPATH + filename)
-        print(f'Thumbnail image \'{filename}\' successfully created.')
+        print(f'Thumbnail image \'{filename}\' successfully downloaded.')
     except:
-        print(f'Failed to create thumbnail image \'{filename}\'.')
+        print(f'Failed to download thumbnail image \'{key}\'.')
     return 
 
 def update_fb(links):
