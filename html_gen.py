@@ -12,6 +12,7 @@ import json
 import datetime as dt
 from bs4 import BeautifulSoup
 import facebook
+from copy import deepcopy
 
 # Alt+Shift+F or right-click in file, choose 'Format Document' to format json in VS Code
 
@@ -27,8 +28,6 @@ HELP = ('Usage: tochtml <url> <key>\n'
 )
 PATH = os.path.dirname(os.path.realpath(sys.argv[0])) + '\\'
 OUTPATH = 'C:' + os.environ["HOMEPATH"] + '\\Desktop\\TOC LINKS\\'
-
-# TODO Past updating is inconsistent.  Use 'date' attribute?
 
 def main():
     print('Loading data...')
@@ -134,7 +133,7 @@ def update_links(links, args):
     links['service']['date'] = get_sunday_date(dt_date)
 
     try:
-        links[key]['thumb'] = get_thumb(link, code)
+        links[key]['thumb'] = get_thumb(key, links, code)
     except:
         links[key]['thumb'] = ''
     try:
@@ -185,21 +184,25 @@ def get_name(link, key):
     return name
 
 def get_date(link):
-    date = ''
+    strdate = ''
     print('  Fetching date...')
-    if link.startswith('https://y'):
+    if link.startswith('https://youtu.be'):
         soup = get_meta(link)
         if soup:
             date = soup.find("strong", attrs={"class": "watch-time-text"}).text
-            if date.startswith('P'):
-                date = date.split('Premiered ')[1:]
+            if date.startswith('Pr'):
+                date = date.split('Premiered ')
+            elif date.startswith('Pu'):
+                date = date.split('Published on ')
             elif date.startswith('U'):
-                date = date.split('Uploaded on ')[1:]
+                date = date.split('Uploaded on ')
         try:
-            date = date[0]
+            print('    Sucessfully updated date.')
+            strdate = date[1]
         except IndexError:
+            print('    Failed to aquire date.')
             pass
-    return date
+    return strdate
 
 def get_sunday_date(stamp):
     days_ahead = 6 - stamp.weekday() # 6 = Sunday
@@ -209,13 +212,16 @@ def get_sunday_date(stamp):
     sunday = sunday.strftime('%B %d, %Y')
     return sunday
 
-def get_thumb(link, slug):
-    if link.startswith('https://y'):
+def get_thumb(key, links, slug):
+    link = links[key]['link']
+    if link.startswith('https://youtu.be'):
         thumb = 'http://img.youtube.com/vi/' + slug + '/maxresdefault.jpg'
-    if link.startswith('https://www.f'):
+    if link.startswith('https://www.facebook'):
         permalink = get_permalink(link)
         postid = facebook_data(permalink)['id']
         thumb = facebook_data(postid + '?fields=full_picture')['full_picture']
+    if link.startswith('https://www.gominno'):
+        thumb = links['recurring']['minnow']
     return thumb
 
 def get_permalink(link):
@@ -229,7 +235,7 @@ def get_permalink(link):
     return perma
 
 def get_meta(link):
-    print('  Processing metadata...')
+    print('    Processing metadata...')
     page = urllib.request.urlopen(link)
     soup = BeautifulSoup(page.read(), "html.parser")
     return soup
@@ -292,8 +298,11 @@ def build(links):
         html += '\n\n\n== PAST ONLINE SERVICES ==\n\n'
         html += '<p>Past Kid\'s Community videos can be found in the MEDIA/KIDS COMMUNITY tab or by clicking<a href="/media/kids-community-videos" data-location="existing" data-detail="/media/kids-community-videos" data-category="link" target="_self" class="cloverlinks"> HERE.</a></p><p><br></p><p><br></p>\n'
         
-        # TODO video Title should be: Title - Date - Speaker
-        
+        # If past links are the same as current from build, recall the previous links
+        if links['last']['link'] == links['main']['link']:
+            links['last'] = links['last_holder']
+            links['past'] = links['past_holder']
+
         html += build_video_html('last', links, 560, 315)
 
         # Kids Community Videos
@@ -313,7 +322,7 @@ def build(links):
         html += '\n\n\n== KIDS COMMUNITY THUMBNAILS ==\n\n'
         for key in keys:
             html += links[key]['thumb'] + '\n'
-
+        
         # Create output file
         timestamp = dt.datetime.now().strftime('%m%d%Y_%H%M%S')
         filename = timestamp +'_site_code.txt'
@@ -329,21 +338,22 @@ def build(links):
             thumb = links[key]['thumb']
             download_thumb(key, thumb)
         
-        # Update json
-        links = update_last(links)
-        update_json(links, None)
+        # TODO don't like this here, should go after update_json, but that function sys.exit
         print(f'Build {timestamp} complete.')
+        
+        # Update json
+        update_last(links)
+        update_json(links)
     else:
         sys.exit()
     return
 
 def build_past_kids(key, links):
     link = links['past'][key]['link']
-    title = links['past'][key]['title']
     html = ''
-    if not link == '':
+    if link:
         past_date = links['past']['date']
-        title = links[key]['title']
+        title = links['past'][key]['title']
         html += '<p>'
         html += past_date
         html += '</p><p><span class="clovercustom" style="font-size: 0.625em;">'
@@ -447,23 +457,26 @@ def build_fb_links(name, embed):
 
 def update_last(links):
     timestamp = dt.datetime.now().strftime('%m/%d/%Y %H:%M:%S')
-    # TODO Title needs to be Name - Date - Speaker
-    title = ''
-    if not links['last'] == links['main']:
-        links['last'] = links['main']
-        links['last']['stamp'] = timestamp
-        #links['last']['title'] = title
-        links = update_past(links)
-    return links
+    # Update holders, this works because it will be reset in the 'build' if the links match
+    links['last_holder'] = links['last']
+    links['past_holder'] = deepcopy(links['past']) # deepcopy creates a new object instance and removes link to past values
+
+    # Update last to current
+    links['last'] = deepcopy(links['main'])
+    links['last']['title'] += ' - ' + links['last']['name']
+    links['last']['stamp'] = timestamp  
+    update_past(links)
+    
+    return
 
 def update_past(links):
+    # Update past to current
     links['past']['date'] = links['service']['date']
     for key in links:
-        if key in links['past']:
+        if key in links['past']:        
             links['past'][key]['link'] = links[key]['link']
             links['past'][key]['title'] = links[key]['title']
-
-    return links
+    return
 
 def update_json(updateDict, arg=None):
     with open(PATH + 'links.json', 'w') as f:
