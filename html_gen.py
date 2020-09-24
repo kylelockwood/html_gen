@@ -13,9 +13,7 @@ import datetime as dt
 import pyperclip
 from copy import deepcopy
 from bs4 import BeautifulSoup
-import facebook
-
-# Alt+Shift+F or right-click in file, choose 'Format Document' to format json in VS Code
+import html
 
 # TODO Refactor as class
 
@@ -32,19 +30,19 @@ HELP = ('Usage: tochtml <url> <key>   or   tochtml <command>\n'
         '  thumbs             - downloads ALL thumbnail images from videos in database\n'
         '  frame <key>        - creates iframe html associated with key, including title and description, and copies to the clipboard\n'
         '  -<new title> <key> - replaces the title attribute in the <key>.  Will return to default after link update\n'
-        '  facebook iframes will be automatically updated in the file \'fb_iframe.txt\' and do not require a <key>\n'
         )
-PATH = os.path.dirname(os.path.realpath(sys.argv[0])) + '\\'
+
 OUTPATH = 'C:' + os.environ["HOMEPATH"] + '\\Desktop\\TOC LINKS\\'
 
 def main():
     print('Loading data...')
-    links = load_json(PATH + 'links.json')
-    args = get_inputs(links)
+    links = load_json('links.json')
+    args = validate_inputs(links)
     print('Updating data...')
     links = update_links(links, args)
-    if args[1] == 'fb':
-        update_fb(links)
+    #pyperclip.copy(str(links[args[1]]))
+    #print(links[args[1]])
+    #sys.exit('Changes are unsaved. Delete this line after testing')
     print('Saving data...')
     update_json(links, args[1])
 
@@ -96,7 +94,7 @@ def invalid_key(key):
         sys.exit()
     return ky
 
-def get_inputs(links):
+def validate_inputs(links):
     """Returns argv[1] and argv[2] after ensuring proper usage and formatting"""
     # Ensure proper usage
     vidtype = 'yt' # default for now
@@ -148,7 +146,7 @@ def get_inputs(links):
     elif arg1.startswith('https://www.youtube.com'):
         arg1 = format_short(arg1)
     elif arg1.startswith('https://www.facebook.com'):
-        arg2 = 'fb'
+        #arg2 = 'fb'
         vidtype = 'fb'
     elif arg1.startswith('www'):
         arg1 = 'https://' + arg1
@@ -163,34 +161,64 @@ def get_inputs(links):
 
     return arg1, arg2, vidtype
 
-def get_soup(link):
+def get_yt_meta(link):
+    lookup = {'meta' : 'content', 'link' : 'href'}
+    properties = {'itemprop' : ['name', 'datePublished', 'videoId', 'thumbnailUrl', 'embedUrl']}
+    meta = get_meta(link, lookup, properties)
+    return {'name' : meta['name'],
+            'published': meta['datePublished'], 
+            'id': meta['videoId'],
+            'thumb' : meta['thumbnailUrl'],
+            'embed' : meta['embedUrl']
+            }
+
+def get_fb_meta(link):
+    lookup = {'meta' : 'content', 'link' : 'href'}
+    properties = {'property' : ['og:title', 'og:image'], 'rel' : [['canonical']]}  
+    meta = get_meta(link, lookup, properties)
+    print(meta)
+    try:
+        name = meta['og:title']
+        url = meta['[\'canonical\']']
+        thumb = html.unescape(meta['og:image'])
+    except KeyError:
+        sys.exit('Error: Video is not public, cannot fetch metadata.')
+    vidid = url.split('/')[-2]
+    page = url.split('/')[3]
+    embed = 'https://www.facebook.com/plugins/video.php?href=https%3A%2F%2Fwww.facebook.com%2F' + page + '%2Fvideos%2F' + vidid + '&amp'
+    return {'name' : name,
+            'published' : '',
+            'id' : vidid,
+            'thumb' : thumb,
+            'embed' : embed
+            }
+
+def get_meta(link, lookup, properties):
     print('    Processing metadata...')
     page = urllib.request.urlopen(link)
-    return BeautifulSoup(page.read(), "html.parser")
-
-def get_yt_meta(link):
-    soup = get_soup(link)
-    if soup:
-        meta_dict = {}
-        lookup = {'meta' : 'content', 'link' : 'href'}
-        keys = ['name', 'datePublished', 'videoId', 'thumbnailUrl', 'embedUrl']
-        for attr in lookup.keys():
-            for itm in soup.find_all(attr):
-                ip = itm.get('itemprop')
-                content = itm.get(lookup[attr])
-                for key in keys:
-                    if content and ip == key:
-                        meta_dict[key] = content
-        return {'name' : meta_dict['name'],
-                'published': meta_dict['datePublished'], 
-                'id': meta_dict['videoId'],
-                'thumb' : meta_dict['thumbnailUrl'],
-                'embed' : meta_dict['embedUrl']}
-    else:
-        sys.exit('Error: could not fetch metadata')
+    soup = BeautifulSoup(page.read(), "html.parser")
+    meta_dict = {}
+    for attr in lookup:
+        #print(f'{attr=}')
+        for itm in soup.find_all(attr):
+            #print(f'{itm=}') # meta, link
+            for prop in properties:  
+                #print(f'{prop=}') # property
+                for p in properties[prop]: # og:title, canonical
+                    #print(f'{p=}')
+                    ip = itm.get(prop) # property
+                    #print(type(ip))
+                    content = itm.get(lookup[attr]) # content, href
+                    #print(f'{ip=}')
+                    if content and ip == p: 
+                        #print(f'{p=}')
+                        #print(f'{content=}')
+                        #if content:
+                        meta_dict[str(p)] = content
+    return meta_dict
 
 def update_links(links, args):
-    """Update json data for key (arg1) """
+    """Update links dict for key (arg1) """
     link = args[0]
     key = args[1]
     vidtype = args[2]
@@ -205,13 +233,13 @@ def update_links(links, args):
         return links
     else:
         links[key]['title'] = default_title()[key]
-    #code = get_id(link)
     if vidtype == 'yt':
         meta = get_yt_meta(link)
     elif vidtype =='fb':
         meta = get_fb_meta(link)
     links[key]['link'] = link
-    #links[key]['name'] = get_name(link, key)
+
+    # If one video for both age groups
     if not links['elem']['link']:
         links['kids']['title'] = 'KIDS COMMUNITY VIDEO'
         links['elem']['title'] = ''
@@ -219,7 +247,6 @@ def update_links(links, args):
         links['kids']['title'] = 'PRE-K VIDEO'
         links['elem']['title'] = 'ELEMENTARY VIDEO'
 
-    # new block
     links[key]['name'] = meta['name']
     links[key]['stamp'] = timestamp
     links[key]['id'] = meta['id']
@@ -233,40 +260,6 @@ def update_links(links, args):
         dt_date = dt.datetime.now()
     links['service']['date'] = get_sunday_date(dt_date)
     return links
-
-    """
-    try:
-        links[key]['stamp'] = timestamp
-    except:
-        links[key]['stamp'] = ''
-    try:
-        links[key]['id'] = code
-    except:
-        links[key]['id'] = ''
-    try:
-        post_date = get_date(link)
-        links[key]['date'] = post_date
-    except:
-        print('    No date data found.')
-        links[key]['date'] = ''
-        links['service']['date'] = ''
-    try:
-        post_date = links['main']['date']
-        dt_date = dt.datetime.strptime(post_date, '%B %d, %Y')
-    except:
-        dt_date = dt.datetime.now()
-    links['service']['date'] = get_sunday_date(dt_date)
-
-    try:
-        links[key]['thumb'] = get_thumb(key, links, code)
-    except:
-        links[key]['thumb'] = ''
-    try:
-        links[key]['embed'] = format_embed(link, code)
-    except:
-        links[key]['embed'] = ''
-    return links
-    """
 
 def blank(key, links, timestamp):
     """Removes data from a key in database"""
@@ -412,7 +405,6 @@ def build(links):
         update_json(links)
     else:
         sys.exit()
-    return
 
 def build_past_kids(key, links, title=None):
     link = links['past'][key]['link']
@@ -482,51 +474,7 @@ def download_thumb(key, thumb):
         urllib.request.urlretrieve(thumb, OUTPATH + filename)
         print(f'Thumbnail image \'{filename}\' successfully downloaded.')
     except:
-        
         print(f'Failed to download thumbnail image \'{key}\'.')
-    return
-
-def get_permalink(link):
-    """Returns the permalink assiciated with a url"""
-    print('  Fetching permalink...')
-    page = urllib.request.urlopen(link)
-    soup = BeautifulSoup(page.read(), "html.parser")
-    perma = ''
-    for lnk in soup.find_all('meta'):
-        url = lnk.get('content')
-        if url and url.startswith('https://'):
-            perma = url.split('permalink%2F')[1][:-3]
-    return perma
-
-def format_fb_embed(link, code):
-    page = link.split('/')[-3]
-    embed = 'https://www.facebook.com/plugins/video.php?href=https%3A%2F%2Fwww.facebook.com%2F' + page + '%2Fvideos%2F' + code + '&amp'
-    return embed
-
-def update_fb(links):
-    link = links['fb']['link']
-    permalink = get_permalink(link)
-    fbdata = facebook_data(permalink)
-    
-    try:
-        name = fbdata['message']
-    except KeyError:
-        print(f'    Could not process \'name\'.')
-        name = ''
-    links['fb']['name'] = name
-    embed = links['fb']['embed']
-    date = fbdata['created_time']
-    date = dt.datetime.strptime(date, '%Y-%m-%dT%H:%M:%S+0000')
-    links['fb']['date'] = date.strftime('%B %d, %Y')
-    build_fb_links(name, embed)
-    thumb = links['fb']['thumb']
-    download_thumb('fb', thumb)
-
-def facebook_data(link):
-    token = load_json(PATH + 'uservars.json')['fb']['usertoken']
-    graph = facebook.GraphAPI(access_token=token)
-    data = graph.get_object(id=link)
-    return data
 
 def build_fb_links(name, embed):
     html = '== WELCOME PAGE ==\n\n'
@@ -572,7 +520,7 @@ def update_past(links):
             links['past'][key]['title'] = title
 
 def update_json(updateDict, arg=None):
-    with open(PATH + 'links.json', 'w') as f:
+    with open('links.json', 'w') as f:
         json.dump(updateDict, f)
     if arg:
         sys.exit(f'Link \'{arg}\' updated.')
@@ -581,6 +529,8 @@ def update_json(updateDict, arg=None):
 
 # Legacy
 """
+PATH = os.path.dirname(os.path.realpath(sys.argv[0])) + '\\'
+
 def get_name(link, key):
 
     # Can get a lot of other metadata from this if needed
@@ -668,6 +618,108 @@ def format_embed(link, code):
 def get_id(link):
     code = link.split('/')[-1]
     return code
+
+def get_soup(link):
+    print('    Processing metadata...')
+    page = urllib.request.urlopen(link)
+    return BeautifulSoup(page.read(), "html.parser")
+
+def get_yt_meta(link):
+    soup = get_soup(link)
+    if soup:
+        meta_dict = {}
+        lookup = {'meta' : 'content', 'link' : 'href'}
+        keys = ['name', 'datePublished', 'videoId', 'thumbnailUrl', 'embedUrl']
+        for attr in lookup.keys():
+            for itm in soup.find_all(attr):
+                ip = itm.get('itemprop')
+                content = itm.get(lookup[attr])
+                for key in keys:
+                    if content and ip == key:
+                        meta_dict[key] = content
+        return {'name' : meta_dict['name'],
+                'published': meta_dict['datePublished'], 
+                'id': meta_dict['videoId'],
+                'thumb' : meta_dict['thumbnailUrl'],
+                'embed' : meta_dict['embedUrl']}
+    else:
+        sys.exit('Error: could not fetch metadata')
+
+def format_fb_embed(link, code):
+    page = link.split('/')[-3]
+    embed = 'https://www.facebook.com/plugins/video.php?href=https%3A%2F%2Fwww.facebook.com%2F' + page + '%2Fvideos%2F' + code + '&amp'
+    return embed
+
+def update_links(); # legacy assignments
+    
+
+    try:
+        links[key]['stamp'] = timestamp
+    except:
+        links[key]['stamp'] = ''
+    try:
+        links[key]['id'] = code
+    except:
+        links[key]['id'] = ''
+    try:
+        post_date = get_date(link)
+        links[key]['date'] = post_date
+    except:
+        print('    No date data found.')
+        links[key]['date'] = ''
+        links['service']['date'] = ''
+    try:
+        post_date = links['main']['date']
+        dt_date = dt.datetime.strptime(post_date, '%B %d, %Y')
+    except:
+        dt_date = dt.datetime.now()
+    links['service']['date'] = get_sunday_date(dt_date)
+
+    try:
+        links[key]['thumb'] = get_thumb(key, links, code)
+    except:
+        links[key]['thumb'] = ''
+    try:
+        links[key]['embed'] = format_embed(link, code)
+    except:
+        links[key]['embed'] = ''
+    return links
+
+def get_permalink(link):
+    print('  Fetching permalink...')
+    page = urllib.request.urlopen(link)
+    soup = BeautifulSoup(page.read(), "html.parser")
+    perma = ''
+    for lnk in soup.find_all('meta'):
+        url = lnk.get('content')
+        if url and url.startswith('https://'):
+            perma = url.split('permalink%2F')[1][:-3]
+    return perma
+
+def update_fb(links):
+    link = links['fb']['link']
+    permalink = get_permalink(link)
+    fbdata = facebook_data(permalink)
+    
+    try:
+        name = fbdata['message']
+    except KeyError:
+        print(f'    Could not process \'name\'.')
+        name = ''
+    links['fb']['name'] = name
+    embed = links['fb']['embed']
+    date = fbdata['created_time']
+    date = dt.datetime.strptime(date, '%Y-%m-%dT%H:%M:%S+0000')
+    links['fb']['date'] = date.strftime('%B %d, %Y')
+    build_fb_links(name, embed)
+    thumb = links['fb']['thumb']
+    download_thumb('fb', thumb)
+
+def facebook_data(link):
+    token = load_json(PATH + 'uservars.json')['fb']['usertoken']
+    graph = facebook.GraphAPI(access_token=token)
+    data = graph.get_object(id=link)
+    return data
 """
 
 if __name__ == '__main__':
