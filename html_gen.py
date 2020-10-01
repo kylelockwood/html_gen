@@ -25,10 +25,12 @@ HELP = ('Usage: tochtml <url> <key>   or   tochtml <command>\n'
         '  blank <key>        - sets empty strings to data in a key\n'
         '  build              - creates an html document titled \'site_code_<timestamp>.txt\' containing current youtube links\n'
         '  ytlinks            - copies \'kids\', \'elem\', and \'ms\' links to the clipboard for YouTube description\n'
-        '  fbpost             - copies stardard Facebook post to clipboard\n'
         '  thumb <key>        - downloads thumbnail image associated with <key>\n'
         '  thumbs             - downloads ALL thumbnail images from videos in database\n'
         '  frame <key>        - creates iframe html associated with key, including title and description, and copies to the clipboard\n'
+        '  fbpost             - copies stardard Facebook post to clipboard\n'
+        '  instaserv          - copies the link associated with <key> to the clipboard\n'
+        '  instaann           - copies the text associated with <key> to the clipboard\n' 
         '  -<new title> <key> - replaces the title attribute in the <key>.  Will return to default after link update\n'
         )
 
@@ -96,8 +98,7 @@ def invalid_key(key):
 
 def validate_inputs(links):
     """Returns argv[1] and argv[2] after ensuring proper usage and formatting"""
-    # Ensure proper usage
-    vidtype = 'yt' # default for now
+    vidtype = 'yt' # TODO default for now
     if len(sys.argv) < 2 or sys.argv[1].lower() == 'help':
         sys.exit(HELP)
     arg1 = sys.argv[1]
@@ -118,6 +119,14 @@ def validate_inputs(links):
         post = fb_post_text(links)
         pyperclip.copy(post)
         sys.exit(f'Facebook post copied to clipboard.')
+    elif arg1 == 'instaserv':
+        post = insta_post_text('serv', links)
+        pyperclip.copy(post)
+        sys.exit(f'Instagram service post copied to clipboard.')
+    elif arg1 == 'instaann':
+        post = insta_post_text('ann', links)
+        pyperclip.copy(post)
+        sys.exit(f'Instagram announcements post copied to clipboard.')
     elif arg1 == 'thumb':
         while True:
             if arg2 in links.keys():
@@ -311,12 +320,18 @@ def fb_post_text(links):
             html += '\n\n'
             html += links[key]['title'] + '\n'
             html += links[key]['link']
+    html += '\n\n' + links['recurring']['sig']['html'] + links['recurring']['sig']['link'] + '\n'
+    html += links['recurring']['sig']['id']
     return html
 
-def insta_post_text():
-    return ('The Oregon Community at Home\n'
-            'New service on our YouTube channel and website! Links in bio.\n'
-            '\#onlinechurch, \#theoregoncommunity')
+def insta_post_text(post_type, links):
+    if post_type == 'serv':
+        title = 'The Oregon Community at home\n' + links['main']['name']
+    elif post_type == 'ann':
+        title = links['ann']['name']
+    sig = '\n\n' + links['recurring']['sig']['html'] + 'Link in bio.\n'
+    tags = links['recurring']['sig']['id']
+    return title + sig + tags
 
 def build(links):
     """Create outfile that contains html for site update"""
@@ -326,24 +341,13 @@ def build(links):
     kids_keys = default_keys()['kids']
     yn = input('Y/N ')
     if yn.lower() == 'y':
-        """
-        # One last check for missing names
-        for key in build_keys:
-            if not links[key]['name']:
-                print(f'  Missing name \'{key}\'')
-                name = get_name(links[key]['link'], key)
-                if name:
-                    links[key]['name'] = name
-                else:
-                    print(f'    Warning, \'{key}\' is still missing attribute \'name\'')
-            """
         # FB Post
-        html = '\n\n\n== FASCEBOOK POST ==\n\n'
+        html = '== FACEBOOK POST ==\n\n'
         html += fb_post_text(links)
 
         # insta post
-        html += '\n\n\n== INSTAGRAM PAGE ==\n\n'
-        html += insta_post_text()
+        html += '\n\n\n== INSTAGRAM POST ==\n\n'
+        html += insta_post_text('service', links)
 
         # Welcome page
         html += '\n\n\n== WELCOME PAGE ==\n\n'
@@ -376,14 +380,14 @@ def build(links):
         for key in kids_keys:
             html += build_past_kids(key, links)
 
-        # Kids Community thumbs (may not need this)
+        # Kids Community thumbs
         html += '\n\n\n== THUMBNAILS ==\n\n'
         for key in build_keys:
             html += links[key]['thumb'] + '\n'
 
         # Create output file
         timestamp = dt.datetime.now().strftime('%m%d%Y_%H%M%S')
-        filename = timestamp +'_site_code.txt'
+        filename = 'BUILD_' + timestamp +'.txt'
         try:
             with open(OUTPATH + filename, 'w') as f:
                 f.writelines(html)
@@ -530,6 +534,18 @@ def update_json(updateDict, arg=None):
 # Legacy
 """
 PATH = os.path.dirname(os.path.realpath(sys.argv[0])) + '\\'
+
+def build(links):
+    <snip>
+        # One last check for missing names
+        for key in build_keys:
+            if not links[key]['name']:
+                print(f'  Missing name \'{key}\'')
+                name = get_name(links[key]['link'], key)
+                if name:
+                    links[key]['name'] = name
+                else:
+                    print(f'    Warning, \'{key}\' is still missing attribute \'name\'')
 
 def get_name(link, key):
 
