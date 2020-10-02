@@ -10,10 +10,10 @@ import sys
 import os
 import json
 import datetime as dt
-import pyperclip
-from copy import deepcopy
-from bs4 import BeautifulSoup
 import html
+from copy import deepcopy
+import pyperclip
+from bs4 import BeautifulSoup
 
 # TODO Refactor as class
 
@@ -23,18 +23,19 @@ HELP = ('Usage: tochtml <url> <key>   or   tochtml <command>\n'
         '  list               - displays current json data relevant to operation\n'
         '  listall            - displays ALL current json data\n'
         '  blank <key>        - sets empty strings to data in a key\n'
-        '  build              - creates an html document titled \'site_code_<timestamp>.txt\' containing current youtube links\n'
+        '  build              - creates an html document titled \'BUILD_<timestamp>.txt\' containing current relevant json data\n'
         '  ytlinks            - copies \'kids\', \'elem\', and \'ms\' links to the clipboard for YouTube description\n'
         '  thumb <key>        - downloads thumbnail image associated with <key>\n'
         '  thumbs             - downloads ALL thumbnail images from videos in database\n'
         '  frame <key>        - creates iframe html associated with key, including title and description, and copies to the clipboard\n'
-        '  fbpost             - copies stardard Facebook post to clipboard\n'
-        '  instaserv          - copies the link associated with <key> to the clipboard\n'
-        '  instaann           - copies the text associated with <key> to the clipboard\n' 
+        '  fbpost <type>      - allowed types are "serv" or "ann", copies relevant Facebook post to the clipboard\n'
+        '  instapost <type>   - allowed types are "serv" or "ann", copies relevant Instagram post to the clipboard\n'
+        '  sig                - copies standard post signature to the clipboard\n'
         '  -<new title> <key> - replaces the title attribute in the <key>.  Will return to default after link update\n'
         )
 
 OUTPATH = 'C:' + os.environ["HOMEPATH"] + '\\Desktop\\TOC LINKS\\'
+PATH = os.path.dirname(os.path.realpath(sys.argv[0])) + '\\' # This is necessary because of the environmental variable call
 
 def main():
     print('Loading data...')
@@ -62,7 +63,7 @@ def print_json_list(json_dict, keys=None):
 
 def load_json(filename):
     try:
-        with open(filename) as f:
+        with open(PATH + filename) as f:
             data = json.load(f)
     except Exception as e:
         sys.exit(f'  Unable to load JSON data. {e}')
@@ -116,17 +117,17 @@ def validate_inputs(links):
     elif arg1 == 'ytlinks':
         copy_links(links, default_keys()['kids'])    
     elif arg1 == 'fbpost':
-        post = fb_post_text(links)
+        post = fb_post_text(arg2, links)
         pyperclip.copy(post)
         sys.exit(f'Facebook post copied to clipboard.')
-    elif arg1 == 'instaserv':
-        post = insta_post_text('serv', links)
+    elif arg1 == 'instapost':
+        post = insta_post_text(arg2, links)
         pyperclip.copy(post)
-        sys.exit(f'Instagram service post copied to clipboard.')
-    elif arg1 == 'instaann':
-        post = insta_post_text('ann', links)
-        pyperclip.copy(post)
-        sys.exit(f'Instagram announcements post copied to clipboard.')
+        sys.exit(f'Instagram post copied to clipboard.')
+    elif arg1 == 'sig':
+        sig = post_signature(links)
+        pyperclip.copy(sig)
+        sys.exit(f'Post signature copied to clipboard.') 
     elif arg1 == 'thumb':
         while True:
             if arg2 in links.keys():
@@ -167,7 +168,6 @@ def validate_inputs(links):
         sys.exit('Error, target must be a valid url or command.\n' + HELP)
     if arg2 is None or arg2 not in links.keys():
         arg2 = invalid_key(arg2)
-
     return arg1, arg2, vidtype
 
 def get_yt_meta(link):
@@ -309,29 +309,43 @@ def format_short(url):
     slug = url.split('=')[-1]
     return 'https://youtu.be/' + slug
 
-def fb_post_text(links):
-    """Returns the text for a FB post to be used in build"""
-    # FB Post creation
-    html = 'The Oregon Community At Home\n\n'
-    html += links['main']['name'] + '\n'
-    html += links['main']['link']
-    for key in default_keys()['kids']:
-        if links[key]['link']:
-            html += '\n\n'
-            html += links[key]['title'] + '\n'
-            html += links[key]['link']
-    html += '\n\n' + links['recurring']['sig']['html'] + links['recurring']['sig']['link'] + '\n'
-    html += links['recurring']['sig']['id']
-    return html
+def fb_post_text(post_type, links):
+    """Returns the text for a FB post"""
+    if post_type == 'serv':
+        post = 'The Oregon Community at home\n\n'
+        post += links['main']['name'] + '\n'
+        post += links['main']['link']
+        for key in default_keys()['kids']:
+            if links[key]['link']:
+                post += '\n\n'
+                post += links[key]['title'] + '\n'
+                post += links[key]['link']
+    elif post_type == 'ann':
+        post = links['ann']['name'] + '\n'
+        post += links['ann']['link']
+    else:
+        sys.exit(f'\'{post_type}\' is not a valid post type.')
+    
+    sig = '\n\n' + links['recurring']['sig']['html'] + links['recurring']['sig']['link'] + '\n'
+    tags = links['recurring']['sig']['id']
+    return post + sig + tags
 
 def insta_post_text(post_type, links):
     if post_type == 'serv':
-        title = 'The Oregon Community at home\n' + links['main']['name']
+        post = 'The Oregon Community at home\n' + links['main']['name']
     elif post_type == 'ann':
-        title = links['ann']['name']
+        post = links['ann']['name']
+    else:
+        sys.exit(f'\'{post_type}\' is not a valid post type.')
     sig = '\n\n' + links['recurring']['sig']['html'] + 'Link in bio.\n'
     tags = links['recurring']['sig']['id']
-    return title + sig + tags
+    return post + sig + tags
+
+def post_signature(links):
+    sig = links['recurring']['sig']['html']
+    link = links['recurring']['sig']['link'] + '\n'
+    tags = links['recurring']['sig']['id'] # hashtags
+    return sig + link + tag
 
 def build(links):
     """Create outfile that contains html for site update"""
@@ -343,11 +357,11 @@ def build(links):
     if yn.lower() == 'y':
         # FB Post
         html = '== FACEBOOK POST ==\n\n'
-        html += fb_post_text(links)
+        html += fb_post_text('serv', links)
 
         # insta post
         html += '\n\n\n== INSTAGRAM POST ==\n\n'
-        html += insta_post_text('service', links)
+        html += insta_post_text('serv', links)
 
         # Welcome page
         html += '\n\n\n== WELCOME PAGE ==\n\n'
@@ -533,8 +547,6 @@ def update_json(updateDict, arg=None):
 
 # Legacy
 """
-PATH = os.path.dirname(os.path.realpath(sys.argv[0])) + '\\'
-
 def build(links):
     <snip>
         # One last check for missing names
