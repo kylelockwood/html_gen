@@ -23,15 +23,17 @@ HELP = ('Usage: tochtml <url> <key>   or   tochtml <command>\n'
         '  list               - displays current json data relevant to operation\n'
         '  listall            - displays ALL current json data\n'
         '  blank <key>        - sets empty strings to data in a key\n'
-        '  build              - creates an html document titled \'BUILD_<timestamp>.txt\' containing current relevant json data\n'
+        '  -<new title> <key> - replaces the title attribute in the <key>.  Will return to default after link update\n'
+        '  build              - creates document titled \'BUILD_<timestamp>.txt\' containing relevant json data formatted for html\n'
         '  ytlinks            - copies \'kids\', \'elem\', and \'ms\' links to the clipboard for YouTube description\n'
-        '  thumb <key>        - downloads thumbnail image associated with <key>\n'
-        '  thumbs             - downloads ALL thumbnail images from videos in database\n'
-        '  frame <key>        - creates iframe html associated with key, including title and description, and copies to the clipboard\n'
         '  fbpost <type>      - allowed types are "serv" or "ann", copies relevant Facebook post to the clipboard\n'
         '  instapost <type>   - allowed types are "serv" or "ann", copies relevant Instagram post to the clipboard\n'
         '  sig                - copies standard post signature to the clipboard\n'
-        '  -<new title> <key> - replaces the title attribute in the <key>.  Will return to default after link update\n'
+        '  <zoom url> <key>   - adds zoom urls to associated key in database\n'
+        '  zzz                - constructs html for zecond zunday zoom using zoom urls in database\n'
+        '  frame <key>        - creates iframe html associated with key, including title and description, and copies to the clipboard\n'
+        '  thumb <key>        - downloads thumbnail image associated with <key>\n'
+        '  thumbs             - downloads ALL thumbnail images from videos in database\n'
         )
 
 OUTPATH = 'C:' + os.environ["HOMEPATH"] + '\\Desktop\\TOC LINKS\\'
@@ -152,14 +154,28 @@ def validate_inputs(links):
                 pyperclip.copy(build_video_html(arg2, links))
                 sys.exit(f'Video html copied to clipboard.')
             else:
+                arg2 = invalid_key(arg2)   
+    elif arg1.startswith('www'):
+        arg1 = 'https://' + arg1
+    
+    elif 'zoom' in arg1:
+        while True:
+            if arg2 in links.keys():
+                links[arg2]['zoom'] = arg1
+                update_json(links, arg2)
+            else:
                 arg2 = invalid_key(arg2)
+    
+    elif arg1 == 'zzz':
+        build_zzz_html(links)
+        sys.exit()
+
     elif arg1.startswith('https://www.youtube.com'):
         arg1 = format_short(arg1)
     elif arg1.startswith('https://www.facebook.com'):
         #arg2 = 'fb'
         vidtype = 'fb'
-    elif arg1.startswith('www'):
-        arg1 = 'https://' + arg1
+    
     elif arg1.startswith('-'): # Renaming title
         return arg1, arg2
     elif arg1 == 'blank':
@@ -337,15 +353,18 @@ def insta_post_text(post_type, links):
         post = links['ann']['name']
     else:
         sys.exit(f'\'{post_type}\' is not a valid post type.')
-    sig = '\n\n' + links['recurring']['sig']['html'] + 'Link in bio.\n'
+    sig = '\n\n' + post_signature(links, insta=True)
     tags = links['recurring']['sig']['id']
     return post + sig + tags
 
-def post_signature(links):
+def post_signature(links, insta=False):
     sig = links['recurring']['sig']['html']
-    link = links['recurring']['sig']['link'] + '\n'
+    if insta:
+        link = 'Link in bio.\n'
+    else:
+        link = links['recurring']['sig']['link'] + '\n'
     tags = links['recurring']['sig']['id'] # hashtags
-    return sig + link + tag
+    return sig + link + tags
 
 def build(links):
     """Create outfile that contains html for site update"""
@@ -398,17 +417,10 @@ def build(links):
         html += '\n\n\n== THUMBNAILS ==\n\n'
         for key in build_keys:
             html += links[key]['thumb'] + '\n'
-
-        # Create output file
-        timestamp = dt.datetime.now().strftime('%m%d%Y_%H%M%S')
-        filename = 'BUILD_' + timestamp +'.txt'
-        try:
-            with open(OUTPATH + filename, 'w') as f:
-                f.writelines(html)
-            print(f'\nFile \'{filename}\' sucessfully created in {OUTPATH}.')
-        except:
-            print(f'\nFile \'{filename}\' could not be created.')
         
+        # Create output file
+        create_txt_file('BUILD', html)
+
         # Thumbnails are generally downloaded earlier in the week to be used in the YT description,
         # so downloading them here is redundant. Leaving the code for future use.
         """
@@ -484,6 +496,51 @@ def build_video_link(key, links):
     html += '<p><br></p><p><br></p><p><br></p>\n'
     return html
 
+def build_zzz_html(links):
+    """Builds html and social media posts for  specific service"""
+    titles = [  ('main', 'Zecond. Zunday. Zoom(v.)'),
+                ('kids' , 'Kid\'s Community Zoom'), 
+                ('ms' , 'Middle School Ministry Zoom')]
+    
+    body = 'Around 10:30, kids will be "dismissed" during the service to join their own Zoom meetings lead by our Kid\'s Community and Middle School Ministry teams. You will need a separate Zoom account if you will be participating in the main service Zoom simultaneously.'
+
+    html = '=== HOME PAGE ===\n\n'
+    html += '<p style="font-size: 0.9722em;">'
+    html += 'Click the Zoom links below to join! '  + body
+    html += '</p><p style="font-size: 1.5278em;"><br></p><p style="font-size: 1.5278em;">10am Sunday</p><p style="font-size: 0.6944em;"><br></p>'
+    for key, title in titles:
+        url = links[key]['zoom']
+        html += '<p><a href="'
+        html += url
+        html += '" class="cloverlinks" data-category="link" data-location="external" data-detail="'
+        html += url
+        html += '" target="_self" style="font-size: 1.25em;">'
+        html += title
+        html += ' - click here</a></p>'
+        if key == 'main':
+            html += '<p><br></p><p><br></p><p><br></p><p style="font-size: 1.5278em;">Around 10:30am</p><p style="font-size: 0.5556em;"></p>'
+        elif key == 'kids':
+            html += '<p><br></p>'
+
+    html += '\n\n\n\n=== FB POST ===\n\n'
+    html += 'ZECOND. ZUNDAY. ZOOM(V.) TODAY!\n\n'
+    html += 'Click the Zoom links below to join! ' + body
+    html += '\n\n10am Sunday\n'
+    for key, title in titles:
+        html += '\n' + title + '\n'
+        html += links[key]['zoom']
+        if key == 'main':
+            html += '\n\nAround 10:30am\n'
+        elif key == 'kids':
+            html += '\n'
+            
+    html += '\n\n\n\n=== INSTA POST ===\n\n'
+    html += 'ZECOND. ZUNDAY. ZOOM(V.) TODAY!\n\n'
+    html += 'Visit our site for the links to join! ' + body
+    html += '\n\n' + post_signature(links, insta=True)
+
+    create_txt_file('ZZZ', html)
+
 def download_thumb(key, thumb):
     """Downloads the image associated with passed thumbnail url to OUTPATH"""
     timestamp = dt.datetime.now().strftime('%m%d%Y_%H%M%S')
@@ -538,12 +595,23 @@ def update_past(links):
             links['past'][key]['title'] = title
 
 def update_json(updateDict, arg=None):
-    with open('links.json', 'w') as f:
+    with open(PATH + 'links.json', 'w') as f:
         json.dump(updateDict, f)
     if arg:
         sys.exit(f'Link \'{arg}\' updated.')
     else:
         sys.exit()
+
+def create_txt_file(title, text):
+    # Create output file
+    timestamp = dt.datetime.now().strftime('%m%d%Y_%H%M%S')
+    filename = title + '_' + timestamp +'.txt'
+    try:
+        with open(OUTPATH + filename, 'w') as f:
+            f.writelines(text)
+        print(f'\nFile \'{filename}\' sucessfully created in {OUTPATH}.')
+    except:
+        print(f'\nFile \'{filename}\' could not be created.')
 
 # Legacy
 """
