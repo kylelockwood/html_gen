@@ -15,811 +15,603 @@ from copy import deepcopy
 import pyperclip
 from bs4 import BeautifulSoup
 
-# TODO Refactor as class
+class HTML_Generator:
+    def __init__(self, dbfile, outpath=None):
+        self.dbfile = dbfile
+        self.scriptpath = os.path.dirname(os.path.realpath(sys.argv[0])) + '\\' # This is necessary because of the environmental variable call
+        self.outpath = 'C:' + os.environ["HOMEPATH"] + '\\Desktop\\' + outpath # Default outpath is Desktop
+        self.help = ('Usage: tochtml <url> <key>   or   tochtml <command>\n'
+                     '  <url>              - accepts youtube and facebook video urls, as well as zoom meeting urls\n'
+                     '  <key>              - where to store url data.  Leaving this argument blank will display choices\n'
+                     '  list               - displays current json data relevant to operation\n'
+                     '  listall            - displays ALL current json data\n'
+                     '  blank <key>        - sets empty strings to data in a key\n'
+                     '  -<new title> <key> - replaces the title attribute in the <key>.  Will return to default after link update\n'
+                     '  build              - creates document titled \'BUILD_<timestamp>.txt\' containing relevant json data formatted for html\n'
+                     '  ytlinks            - copies \'kids\', \'elem\', and \'ms\' links to the clipboard for YouTube description\n'
+                     '  fbpost <type>      - allowed types are "serv" or "ann", copies relevant Facebook post to the clipboard\n'
+                     '  instapost <type>   - allowed types are "serv" or "ann", copies relevant Instagram post to the clipboard\n'
+                     '  sig                - copies standard post signature to the clipboard\n'
+                     '  <zoom url> <key>   - adds zoom urls to associated key in database\n'
+                     '  zzz                - constructs html and media posts for Zecond Zunday Zoom servce using zoom urls in database and outputs to txt file titled \'ZZZ_<timestamp>\'\n'
+                     '  frame <key>        - creates iframe html associated with key, including title and description, and copies to the clipboard\n'
+                     '  thumb <key>        - downloads thumbnail image associated with <key>\n'
+                     '  thumbs             - downloads ALL thumbnail images from videos in database\n'
+                    )
+        self.default_keys = {'kids' : ['kids', 'elem', 'ms'],
+                             'main' : ['main', 'kids', 'elem', 'ms', 'ann'],
+                             'service' : ['service', 'main', 'kids', 'elem', 'ms'],
+                             'build' : ['main', 'kids', 'elem', 'ms']}
+        self.default_title = {'main' : 'SUNDAY SERVICE',
+                              'kids' : 'PRE-K VIDEO',
+                              'elem' : 'ELEMENTARY VIDEO',
+                              'ms' : 'MIDDLE SCHOOL VIDEO',
+                              'ann' : 'ANNOUNCEMENTS',
+                              'fb' : 'LIVE UPDATES'}
+        self.zoom_titles = [('main', 'Zecond. Zunday. Zoom(v.)'),
+                            ('kids', 'Kid\'s Community Zoom'),
+                            ('ms', 'Middle School Ministry Zoom')]
+        self.vidtype = None
+        self.app()
 
-HELP = ('Usage: tochtml <url> <key>   or   tochtml <command>\n'
-        '  <url>              - accepts youtube and facebook video url\n'
-        '  <key>              - where to store url data.  Leaving this argument blank will display choices\n'
-        '  list               - displays current json data relevant to operation\n'
-        '  listall            - displays ALL current json data\n'
-        '  blank <key>        - sets empty strings to data in a key\n'
-        '  -<new title> <key> - replaces the title attribute in the <key>.  Will return to default after link update\n'
-        '  build              - creates document titled \'BUILD_<timestamp>.txt\' containing relevant json data formatted for html\n'
-        '  ytlinks            - copies \'kids\', \'elem\', and \'ms\' links to the clipboard for YouTube description\n'
-        '  fbpost <type>      - allowed types are "serv" or "ann", copies relevant Facebook post to the clipboard\n'
-        '  instapost <type>   - allowed types are "serv" or "ann", copies relevant Instagram post to the clipboard\n'
-        '  sig                - copies standard post signature to the clipboard\n'
-        '  <zoom url> <key>   - adds zoom urls to associated key in database\n'
-        '  zzz                - constructs html for zecond zunday zoom using zoom urls in database\n'
-        '  frame <key>        - creates iframe html associated with key, including title and description, and copies to the clipboard\n'
-        '  thumb <key>        - downloads thumbnail image associated with <key>\n'
-        '  thumbs             - downloads ALL thumbnail images from videos in database\n'
-        )
+    def app(self):
+        print('Loading data...')
+        self.db = self._load_json_(self.dbfile)
+        self.args = self.__validate_inputs__()
+        print('Updating data...')
+        self._update_links_()
+        print('Saving data...')
+        self._update_json_(self.args[1])
 
-OUTPATH = 'C:' + os.environ["HOMEPATH"] + '\\Desktop\\TOC LINKS\\'
-PATH = os.path.dirname(os.path.realpath(sys.argv[0])) + '\\' # This is necessary because of the environmental variable call
+    def build(self):
+        """Create outfile that contains html for site update"""
+        print('Build current list?')
+        self.__print_json_list__(self.default_keys['service'])
+        build_keys = self.default_keys['build']
+        kids_keys = self.default_keys['kids']
+        yn = input('Y/N ')
+        if yn.lower() == 'y':
+            # FB Post
+            html = '== FACEBOOK POST ==\n\n'
+            html += self.fb_post_text('serv')
 
-def main():
-    print('Loading data...')
-    links = load_json('links.json')
-    args = validate_inputs(links)
-    print('Updating data...')
-    links = update_links(links, args)
-    #pyperclip.copy(str(links[args[1]]))
-    #print(links[args[1]])
-    #sys.exit('Changes are unsaved. Delete this line after testing')
-    print('Saving data...')
-    update_json(links, args[1])
+            # insta post
+            html += '\n\n\n== INSTAGRAM POST ==\n\n'
+            html += self.insta_post_text('serv')
 
-def print_json_list(json_dict, keys=None):
-    if not keys:
-        keys = json_dict.keys()
-    for key in keys:
-        print(key)
-        try:
-            for k, item in json_dict[key].items():
-                print(f'   {k} : {item}')
-        except:
-            pass
-    return
+            # Welcome page
+            html += '\n\n\n== WELCOME PAGE ==\n\n'
+            for key in build_keys:
+                html += self.__build_video_html__(key)
 
-def load_json(filename):
-    try:
-        with open(PATH + filename) as f:
-            data = json.load(f)
-    except Exception as e:
-        sys.exit(f'  Unable to load JSON data. {e}')
-    return data
+            # Online Services page
+            html += '\n\n\n== ONLINE SERVICES PAGE ==\n\n'
+            html += self.__build_video_html__('main')
 
-def default_keys():
-    """Return keys associated with elements used in functions"""
-    return{
-        'kids' : ['kids', 'elem', 'ms'],
-        'main' : ['main', 'kids', 'elem', 'ms', 'ann'],
-        'service' : ['service', 'main', 'kids', 'elem', 'ms'],
-        'build' : ['main', 'kids', 'elem', 'ms']
-    }
+            # Past online services
+            html += '\n\n\n== PAST ONLINE SERVICES ==\n\n'
+            title = self.db['past']['main']['title']
+            title = title.split(' - ')[0]
+            html += self. __build_past_kids__('main', title=title)
 
-def default_title():
-    return {'main' : 'SUNDAY SERVICE',
-            'kids' : 'PRE-K VIDEO',
-            'elem' : 'ELEMENTARY VIDEO',
-            'ms' : 'MIDDLE SCHOOL VIDEO',
-            'ann' : 'ANNOUNCEMENTS',
-            'fb' : 'LIVE UPDATES'
-    }
+            # If past links are the same as current from build, recall the previous links
+            if self.db['last']['link'] == self.db['main']['link']:
+                self.db['last'] = self.db['last_holder']
+                self.db['past'] = self.db['past_holder']
 
-def invalid_key(key):
-    """Validates missing keys, ensures proper usage"""
-    print(f'\'{key}\' is not a valid key.')
-    for k in default_keys()['main']:
-        print(f'  {k}')
-    ky = input('Please choose a key from the above list. Type \'exit\' to exit: ')
-    if ky.lower() == 'exit':
-        sys.exit()
-    return ky
+            # Kids Community Videos
+            html += '\n\n\n== KIDS COMMUNITY VIDEOS ==\n\n'
+            html += '<p>Here you will find videos for the Kid\'s Community and Middle School Ministry.&nbsp; Full online service videos can be found in the <a href="/media/online-services" data-location="existing" data-detail="/media/online-services" data-category="link" target="_self" class="cloverlinks">MEDIA/ONLINE SERVICES</a> tab</p><p><br></p><p><br></p><p><br></p>'
+            for key in kids_keys:
+                html += self.__build_video_html__(key)
 
-def validate_inputs(links):
-    """Returns argv[1] and argv[2] after ensuring proper usage and formatting"""
-    vidtype = 'yt' # TODO default for now
-    if len(sys.argv) < 2 or sys.argv[1].lower() == 'help':
-        sys.exit(HELP)
-    arg1 = sys.argv[1]
-    try:
-        arg2 = sys.argv[2]
-    except IndexError:
-        arg2 = None
-    if arg1 == 'listall':
-        # list current data in JSON
-        sys.exit(print_json_list(links))
-    elif arg1 == 'list':
-        sys.exit(print_json_list(links, default_keys()['service']))
-    elif arg1 == 'build':
-        build(links)
-    elif arg1 == 'ytlinks':
-        copy_links(links, default_keys()['kids'])    
-    elif arg1 == 'fbpost':
-        post = fb_post_text(arg2, links)
-        pyperclip.copy(post)
-        sys.exit(f'Facebook post copied to clipboard.')
-    elif arg1 == 'instapost':
-        post = insta_post_text(arg2, links)
-        pyperclip.copy(post)
-        sys.exit(f'Instagram post copied to clipboard.')
-    elif arg1 == 'sig':
-        sig = post_signature(links)
-        pyperclip.copy(sig)
-        sys.exit(f'Post signature copied to clipboard.') 
-    elif arg1 == 'thumb':
-        while True:
-            if arg2 in links.keys():
-                try:
-                    thumb = links[arg2]['thumb']
-                    download_thumb(arg2, thumb)
-                    sys.exit()
-                except:
-                    sys.exit()
-            else:
-                arg2 = invalid_key(arg2)
-    elif arg1 == 'thumbs':
-        for key in default_keys()['main']:
-            try:
-                download_thumb(key, links[key]['thumb'])
-            except:
-                continue
-        sys.exit()
-    elif arg1 == 'frame':
-        while True:
-            if arg2 in links.keys():
-                pyperclip.copy(build_video_html(arg2, links))
-                sys.exit(f'Video html copied to clipboard.')
-            else:
-                arg2 = invalid_key(arg2)   
-    elif arg1.startswith('www'):
-        arg1 = 'https://' + arg1
-    
-    elif 'zoom' in arg1:
-        while True:
-            if arg2 in links.keys():
-                links[arg2]['zoom'] = arg1
-                update_json(links, arg2)
-            else:
-                arg2 = invalid_key(arg2)
-    
-    elif arg1 == 'zzz':
-        build_zzz_html(links)
-        sys.exit()
+            # Past Kid's Videos
+            html += '\n\n\n== KIDS PAST VIDEOS ==\n\n'
+            for key in kids_keys:
+                html += self. __build_past_kids__(key)
 
-    elif arg1.startswith('https://www.youtube.com'):
-        arg1 = format_short(arg1)
-    elif arg1.startswith('https://www.facebook.com'):
-        #arg2 = 'fb'
-        vidtype = 'fb'
-    
-    elif arg1.startswith('-'): # Renaming title
-        return arg1, arg2
-    elif arg1 == 'blank':
-        arg1 = None
-    elif arg1 and not arg1.startswith('https://'):
-        sys.exit('Error, target must be a valid url or command.\n' + HELP)
-    if arg2 is None or arg2 not in links.keys():
-        arg2 = invalid_key(arg2)
-    return arg1, arg2, vidtype
+            # Kids Community thumbs
+            html += '\n\n\n== THUMBNAILS ==\n\n'
+            for key in build_keys:
+                html += self.db[key]['thumb'] + '\n'
 
-def get_yt_meta(link):
-    lookup = {'meta' : 'content', 'link' : 'href'}
-    properties = {'itemprop' : ['name', 'datePublished', 'videoId', 'thumbnailUrl', 'embedUrl']}
-    meta = get_meta(link, lookup, properties)
-    return {'name' : meta['name'],
-            'published': meta['datePublished'], 
-            'id': meta['videoId'],
-            'thumb' : meta['thumbnailUrl'],
-            'embed' : meta['embedUrl']
-            }
+            # Create output file
+            self._create_txt_file_('BUILD', html)
 
-def get_fb_meta(link):
-    lookup = {'meta' : 'content', 'link' : 'href'}
-    properties = {'property' : ['og:title', 'og:image'], 'rel' : [['canonical']]}  
-    meta = get_meta(link, lookup, properties)
-    print(meta)
-    try:
-        name = meta['og:title']
-        url = meta['[\'canonical\']']
-        thumb = html.unescape(meta['og:image'])
-    except KeyError:
-        sys.exit('Error: Video is not public, cannot fetch metadata.')
-    vidid = url.split('/')[-2]
-    page = url.split('/')[3]
-    embed = 'https://www.facebook.com/plugins/video.php?href=https%3A%2F%2Fwww.facebook.com%2F' + page + '%2Fvideos%2F' + vidid + '&amp'
-    return {'name' : name,
-            'published' : '',
-            'id' : vidid,
-            'thumb' : thumb,
-            'embed' : embed
-            }
+            # Download the main service thumbnail
+            self.download_thumb('main')
 
-def get_meta(link, lookup, properties):
-    print('    Processing metadata...')
-    page = urllib.request.urlopen(link)
-    soup = BeautifulSoup(page.read(), "html.parser")
-    meta_dict = {}
-    for attr in lookup:
-        #print(f'{attr=}')
-        for itm in soup.find_all(attr):
-            #print(f'{itm=}') # meta, link
-            for prop in properties:  
-                #print(f'{prop=}') # property
-                for p in properties[prop]: # og:title, canonical
-                    #print(f'{p=}')
-                    ip = itm.get(prop) # property
-                    #print(type(ip))
-                    content = itm.get(lookup[attr]) # content, href
-                    #print(f'{ip=}')
-                    if content and ip == p: 
-                        #print(f'{p=}')
-                        #print(f'{content=}')
-                        #if content:
-                        meta_dict[str(p)] = content
-    return meta_dict
+            # Thumbnails are generally downloaded earlier in the week to be used in the YT description,
+            # so downloading them here is redundant. Leaving the code for future use.
+            """
+            # Download all thumbnails
+            for key in build_keys:
+                thumb = links[key]['thumb']
+                download_thumb(key, thumb)
+            """
 
-def update_links(links, args):
-    """Update links dict for key (arg1) """
-    link = args[0]
-    key = args[1]
-    vidtype = args[2]
-    timestamp = dt.datetime.now().strftime('%m/%d/%Y %H:%M:%S')
-    if link is None:
-        links = blank(key, links, timestamp)
-        return links
-    elif link.startswith('-'): # Rename title command
-        temp_title = link.split('-')[1]
-        links[key]['title'] = temp_title
-        print(f'    Title \'{temp_title}\' updated for \'{key}\'.')
-        return links
-    else:
-        links[key]['title'] = default_title()[key]
-    if vidtype == 'yt':
-        meta = get_yt_meta(link)
-    elif vidtype =='fb':
-        meta = get_fb_meta(link)
-    links[key]['link'] = link
-
-    # If one video for both age groups
-    if not links['elem']['link']:
-        links['kids']['title'] = 'KIDS COMMUNITY VIDEO'
-        links['elem']['title'] = ''
-    else:
-        links['kids']['title'] = 'PRE-K VIDEO'
-        links['elem']['title'] = 'ELEMENTARY VIDEO'
-
-    links[key]['name'] = meta['name']
-    links[key]['stamp'] = timestamp
-    links[key]['id'] = meta['id']
-    links[key]['date'] = meta['published']
-    links[key]['thumb'] = meta['thumb']
-    links[key]['embed'] = meta['embed']
-    try:
-        post_date = links['main']['date']
-        dt_date = dt.datetime.strptime(post_date, '%Y-%m-%d')
-    except:
-        dt_date = dt.datetime.now()
-    links['service']['date'] = get_sunday_date(dt_date)
-    return links
-
-def blank(key, links, timestamp):
-    """Removes data from a key in database"""
-    yn = input(f'Remove data from \'{key}\'?  Y/N : ')
-    if yn.lower() == 'y':
-        for item in links[key]:
-            links[key][item] = ''
-        links[key]['stamp'] = timestamp
-    return links
-
-def copy_links(links, keys):
-    """Copies urls in keys to the clipboard""" 
-    content = ''
-    outmessage = ''
-    for key in keys:
-        link = links[key]['link']
-        if link:
-            content += links[key]['title'] + '\n' + link +'\n\n'
-            if key == keys[len(keys) -1]:
-                outmessage += ' and'
-            outmessage += ' \'' + key + '\''
-            if key != keys[len(keys) -1]:
-                outmessage += ','
-    pyperclip.copy(content)
-    sys.exit(f'Links for{outmessage} copied to clipboard.')
-
-def get_sunday_date(stamp):
-    """Return the date of the nearest upcoming Sunday"""
-    days_ahead = 6 - stamp.weekday() # 6 = Sunday
-    if days_ahead <= 0:
-        days_ahead += 7
-    sunday = stamp + dt.timedelta(days_ahead)
-    sunday = sunday.strftime('%B %d, %Y')
-    return sunday
-
-def format_short(url):
-    """Reformats long YouTube urls to short"""
-    slug = url.split('=')[-1]
-    return 'https://youtu.be/' + slug
-
-def fb_post_text(post_type, links):
-    """Returns the text for a FB post"""
-    if post_type == 'serv':
-        post = 'The Oregon Community at home\n\n'
-        post += links['main']['name'] + '\n'
-        post += links['main']['link']
-        for key in default_keys()['kids']:
-            if links[key]['link']:
-                post += '\n\n'
-                post += links[key]['title'] + '\n'
-                post += links[key]['link']
-    elif post_type == 'ann':
-        post = links['ann']['name'] + '\n'
-        post += links['ann']['link']
-    else:
-        sys.exit(f'\'{post_type}\' is not a valid post type.')
-    
-    sig = '\n\n' + links['recurring']['sig']['html'] + links['recurring']['sig']['link'] + '\n'
-    tags = links['recurring']['sig']['id']
-    return post + sig + tags
-
-def insta_post_text(post_type, links):
-    if post_type == 'serv':
-        post = 'The Oregon Community at home\n' + links['main']['name']
-    elif post_type == 'ann':
-        post = links['ann']['name']
-    else:
-        sys.exit(f'\'{post_type}\' is not a valid post type.')
-    sig = '\n\n' + post_signature(links, insta=True)
-    tags = links['recurring']['sig']['id']
-    return post + sig + tags
-
-def post_signature(links, insta=False):
-    sig = links['recurring']['sig']['html']
-    if insta:
-        link = 'Link in bio.\n'
-    else:
-        link = links['recurring']['sig']['link'] + '\n'
-    tags = links['recurring']['sig']['id'] # hashtags
-    return sig + link + tags
-
-def build(links):
-    """Create outfile that contains html for site update"""
-    print('Build current list?')
-    print_json_list(links, default_keys()['service'])
-    build_keys = default_keys()['build']
-    kids_keys = default_keys()['kids']
-    yn = input('Y/N ')
-    if yn.lower() == 'y':
-        # FB Post
-        html = '== FACEBOOK POST ==\n\n'
-        html += fb_post_text('serv', links)
-
-        # insta post
-        html += '\n\n\n== INSTAGRAM POST ==\n\n'
-        html += insta_post_text('serv', links)
-
-        # Welcome page
-        html += '\n\n\n== WELCOME PAGE ==\n\n'
-        for key in build_keys:
-            html += build_video_html(key, links, 734, 415)
-
-        # Online Services page
-        html += '\n\n\n== ONLINE SERVICES PAGE ==\n\n'
-        html += build_video_html('main', links, 734, 415)
-
-        # Past online services
-        html += '\n\n\n== PAST ONLINE SERVICES ==\n\n'
-        title = links['past']['main']['title']
-        title = title.split(' - ')[0]
-        html += build_past_kids('main', links, title=title)
-
-        # If past links are the same as current from build, recall the previous links
-        if links['last']['link'] == links['main']['link']:
-            links['last'] = links['last_holder']
-            links['past'] = links['past_holder']
-
-        # Kids Community Videos
-        html += '\n\n\n== KIDS COMMUNITY VIDEOS ==\n\n'
-        html += '<p>Here you will find videos for the Kid\'s Community and Middle School Ministry.&nbsp; Full online service videos can be found in the <a href="/media/online-services" data-location="existing" data-detail="/media/online-services" data-category="link" target="_self" class="cloverlinks">MEDIA/ONLINE SERVICES</a> tab</p><p><br></p><p><br></p><p><br></p>'
-        for key in kids_keys:
-            html += build_video_html(key, links, 734, 415)
-
-        # Past Kid's Videos
-        html += '\n\n\n== KIDS PAST VIDEOS ==\n\n'
-        for key in kids_keys:
-            html += build_past_kids(key, links)
-
-        # Kids Community thumbs
-        html += '\n\n\n== THUMBNAILS ==\n\n'
-        for key in build_keys:
-            html += links[key]['thumb'] + '\n'
-        
-        # Create output file
-        create_txt_file('BUILD', html)
-
-        # Thumbnails are generally downloaded earlier in the week to be used in the YT description,
-        # so downloading them here is redundant. Leaving the code for future use.
-        """
-        # Download thumbnails
-        for key in build_keys:
-            thumb = links[key]['thumb']
-            download_thumb(key, thumb)
-        """
-
-        # Update json
-        update_last(links)
-        update_json(links)
-    else:
-        sys.exit()
-
-def build_past_kids(key, links, title=None):
-    link = links['past'][key]['link']
-    html = ''
-    if link:
-        past_date = links['past']['date']
-        if title is None:
-            title = links['past'][key]['title']
-        html += '<p>'
-        html += past_date
-        html += '</p><p><span class="clovercustom" style="font-size: 0.625em;">'
-        html += title
-        html += '</span></p>\n'
-        html += link
-        html += '\n\n'
-    return html
-
-def build_video_html(key, links, w=734, h=415):
-    """Return html for video container that includes title and iframe"""
-    link = links[key]['link']
-    title = links[key]['title']
-    if link:
-        if link.startswith('https://youtu.be'):
-            html = build_iframe(key, links, w, h) + '\n'
-            html += '<p style="font-size: 1.8301em;">' + title + '</p>\n'
-            html += '<p>' + links[key]['name'] + '</p>\n'
-            html += '<p><br></p><p><br></p><p><br></p>\n'
+            # Update json
+            self.__update_last__()
+            self._update_json_()
         else:
-            html = build_video_link(key, links)
-    else:
-        html = ''
-    return html
+            sys.exit()
 
-def build_iframe(key, links, w=734, h=415):
-    """Return the iframe html for a link"""
-    if links[key]['embed']:
-        html = '<iframe width="'+ str(w) +'" height="'+ str(h) +'" src="'
-        html += links[key]['embed']
-        html += '" frameborder="0" allow="accelerometer; autoplay; encrypted-media; gyroscope; picture-in-picture" allowfullscreen=""></iframe>'
-    else:
-        html = ''
-    return html
+    def fb_post_text(self, post_type):
+        """Returns the text for a FB post"""
+        if post_type == 'serv':
+            post = 'The Oregon Community at home\n\n'
+            post += self.db['main']['name'] + '\n'
+            post += self.db['main']['link']
+            for key in self.default_keys['kids']:
+                if self.db[key]['link']:
+                    post += '\n\n'
+                    post += self.db[key]['title'] + '\n'
+                    post += self.db[key]['link']
+        elif post_type == 'ann':
+            post = self.db['ann']['name'] + '\n'
+            post += self.db['ann']['link']
+        else:
+            sys.exit(f'\'{post_type}\' is not a valid post type.')
 
-def build_video_link(key, links):
-    link = links[key]['link']
-    title = links[key]['title']
-    html = '<p style="font-size: 1.8301em;"><a href="'
-    html += link
-    html += '" data-location="external" data-detail="'
-    html += link
-    html += '" data-category="link" target="_blank" class="cloverlinks">'
-    html += title
-    html += '</a></p>\n'
-    html += '<p><a href="'
-    html += link
-    html += '" data-location="external" data-detail="'
-    html += link
-    html += '" data-category="link" target="_blank" class="cloverlinks">Click here</a></p>'
-    html += '<p><br></p><p><br></p><p><br></p>\n'
-    return html
+        sig = '\n\n' + self.db['recurring']['sig']['html'] + self.db['recurring']['sig']['link'] + '\n'
+        tags = self.db['recurring']['sig']['id']
+        return post + sig + tags
 
-def build_zzz_html(links):
-    """Builds html and social media posts for  specific service"""
-    titles = [  ('main', 'Zecond. Zunday. Zoom(v.)'),
-                ('kids' , 'Kid\'s Community Zoom'), 
-                ('ms' , 'Middle School Ministry Zoom')]
-    
-    body = 'Around 10:30, kids will be "dismissed" during the service to join their own Zoom meetings lead by our Kid\'s Community and Middle School Ministry teams. You will need a separate Zoom account if you will be participating in the main service Zoom simultaneously.'
+    def insta_post_text(self, post_type):
+        if post_type == 'serv':
+            post = 'The Oregon Community at home\n' + self.db['main']['name']
+        elif post_type == 'ann':
+            post = self.db['ann']['name']
+        else:
+            sys.exit(f'\'{post_type}\' is not a valid post type.')
+        post += '\nCheck out the video on our YouTube channel!'
+        sig = '\n\n' + self.__post_signature__(insta=True)
+        return post + sig
 
-    html = '=== HOME PAGE ===\n\n'
-    html += '<p style="font-size: 0.9722em;">'
-    html += 'Click the Zoom links below to join! '  + body
-    html += '</p><p style="font-size: 1.5278em;"><br></p><p style="font-size: 1.5278em;">10am Sunday</p><p style="font-size: 0.6944em;"><br></p>'
-    for key, title in titles:
-        url = links[key]['zoom']
-        html += '<p><a href="'
-        html += url
-        html += '" class="cloverlinks" data-category="link" data-location="external" data-detail="'
-        html += url
-        html += '" target="_self" style="font-size: 1.25em;">'
-        html += title
-        html += ' - click here</a></p>'
-        if key == 'main':
-            html += '<p><br></p><p><br></p><p><br></p><p style="font-size: 1.5278em;">Around 10:30am</p><p style="font-size: 0.5556em;"></p>'
-        elif key == 'kids':
-            html += '<p><br></p>'
+    def build_iframe(self, key, w=734, h=415):
+        """Return the iframe html for a link"""
+        if self.db[key]['embed']:
+            html = '<iframe width="'+ str(w) +'" height="'+ str(h) +'" src="'
+            html += self.db[key]['embed']
+            html += '" frameborder="0" allow="accelerometer; autoplay; encrypted-media; gyroscope; picture-in-picture" allowfullscreen=""></iframe>'
+        else:
+            html = ''
+        return html
 
-    html += '\n\n\n\n=== FB POST ===\n\n'
-    html += 'ZECOND. ZUNDAY. ZOOM(V.) TODAY!\n\n'
-    html += 'Click the Zoom links below to join! ' + body
-    html += '\n\n10am Sunday\n'
-    for key, title in titles:
-        html += '\n' + title + '\n'
-        html += links[key]['zoom']
-        if key == 'main':
-            html += '\n\nAround 10:30am\n'
-        elif key == 'kids':
-            html += '\n'
-            
-    html += '\n\n\n\n=== INSTA POST ===\n\n'
-    html += 'ZECOND. ZUNDAY. ZOOM(V.) TODAY!\n\n'
-    html += 'Visit our site for the links to join! ' + body
-    html += '\n\n' + post_signature(links, insta=True)
+    def download_thumb(self, key, thumb=None):
+        """Downloads the image associated with passed thumbnail url to OUTPATH"""
+        timestamp = dt.datetime.now().strftime('%m%d%Y_%H%M%S')
+        filename = timestamp + '_' + key + '_thumb.jpg'
+        if not thumb:
+            thumb = self.db[key]['thumb']
+        try:
+            urllib.request.urlretrieve(thumb, self.outpath + filename)
+            print(f'Thumbnail image \'{filename}\' successfully downloaded.')
+        except:
+            print(f'Failed to download thumbnail image \'{key}\'.')
 
-    create_txt_file('ZZZ', html)
-
-def download_thumb(key, thumb):
-    """Downloads the image associated with passed thumbnail url to OUTPATH"""
-    timestamp = dt.datetime.now().strftime('%m%d%Y_%H%M%S')
-    filename = timestamp + '_' + key + '_thumb.jpg'
-    try:
-        urllib.request.urlretrieve(thumb, OUTPATH + filename)
-        print(f'Thumbnail image \'{filename}\' successfully downloaded.')
-    except:
-        print(f'Failed to download thumbnail image \'{key}\'.')
-
-def build_fb_links(name, embed):
-    html = '== WELCOME PAGE ==\n\n'
-    html += '<div><span class="clovercustom" style="font-size: 0.915em;">Get the latest updates from The Oregon Community staff here.  Past videos can all be found in the MEDIA tab or by clicking here.</span></div><div><br><br></div>\n'
-    html += '<iframe src="'
-    html += embed
-    html += ';show_text=false&amp;width=734&amp;height=411&amp;appId" width="734" height="411" style="border:none;overflow:hidden" scrolling="no" frameborder="0" allowtransparency="true" allow="encrypted-media" allowfullscreen="true"></iframe>\n'
-    html += '<p><br></p>\n'
-    html += '<p style="font-size: 1.3072em;">'
-    html += name
-    html += '<br></p>'
-    html += '\n\n\n== VIDEOS PAGE ==\n\n'
-
-    # Update facebook html file
-    filename = 'fb_iframe.txt'
-    with open(OUTPATH + filename, 'w') as f:
-        f.writelines(html)
-    pyperclip.copy(html)
-    print(filename + ' updated. iframe copied to clipboard.')
-
-def update_last(links):
-    """When build is called, the current database data is moved to 'last'"""
-    timestamp = dt.datetime.now().strftime('%m/%d/%Y %H:%M:%S')
-    # Update holders, this works because it will be reset in the 'build' if the links match
-    links['last_holder'] = links['last']
-    links['past_holder'] = deepcopy(links['past']) # deepcopy creates a new object instance and removes link to past values
-
-    # Update last to current
-    links['last'] = deepcopy(links['main'])
-    links['last']['title'] += ' - ' + deepcopy(links['main']['name'])
-    links['last']['stamp'] = timestamp
-    update_past(links)
-
-def update_past(links):
-    # Update past to current
-    links['past']['date'] = links['service']['date']
-    for key in links:
-        if key in links['past']:
-            title = links[key]['title']
+    def build_zzz_html(self):
+        """Builds html and social media posts for  specific service"""
+        body = 'Around 10:30, kids will be "dismissed" during the service to join their own Zoom meetings lead by our Kid\'s Community and Middle School Ministry teams. You will need a separate Zoom account if you will be participating in the main service Zoom simultaneously.'
+        html = '=== HOME PAGE ===\n\n'
+        html += '<p style="font-size: 0.9722em;">'
+        html += 'Click the Zoom links below to join! '  + body
+        html += '</p><p style="font-size: 1.5278em;"><br></p><p style="font-size: 1.5278em;">10am Sunday</p><p style="font-size: 0.6944em;"><br></p>'
+        for key, title in self.zoom_titles:
+            url = self.db[key]['zoom']
+            html += '<p><a href="'
+            html += url
+            html += '" class="cloverlinks" data-category="link" data-location="external" data-detail="'
+            html += url
+            html += '" target="_self" style="font-size: 1.25em;">'
+            html += title
+            html += ' - click here</a></p>'
             if key == 'main':
-                title = links[key]['name']
-            links['past'][key]['link'] = links[key]['link']
-            links['past'][key]['title'] = title
+                html += '<p><br></p><p><br></p><p><br></p><p style="font-size: 1.5278em;">Around 10:30am</p><p style="font-size: 0.5556em;"></p>'
+            elif key == 'kids':
+                html += '<p><br></p>'
 
-def update_json(updateDict, arg=None):
-    with open(PATH + 'links.json', 'w') as f:
-        json.dump(updateDict, f)
-    if arg:
-        sys.exit(f'Link \'{arg}\' updated.')
-    else:
-        sys.exit()
+        html += '\n\n\n\n=== FB POST ===\n\n'
+        html += 'ZECOND. ZUNDAY. ZOOM(V.) TODAY!\n\n'
+        html += 'Click the Zoom links below to join! ' + body
+        html += '\n\n10am Sunday\n'
+        for key, title in self.zoom_titles:
+            html += '\n' + title + '\n'
+            html += self.db[key]['zoom']
+            if key == 'main':
+                html += '\n\nAround 10:30am\n'
+            elif key == 'kids':
+                html += '\n'
 
-def create_txt_file(title, text):
-    # Create output file
-    timestamp = dt.datetime.now().strftime('%m%d%Y_%H%M%S')
-    filename = title + '_' + timestamp +'.txt'
-    try:
-        with open(OUTPATH + filename, 'w') as f:
-            f.writelines(text)
-        print(f'\nFile \'{filename}\' sucessfully created in {OUTPATH}.')
-    except:
-        print(f'\nFile \'{filename}\' could not be created.')
+        html += '\n\n\n\n=== INSTA POST ===\n\n'
+        html += 'ZECOND. ZUNDAY. ZOOM(V.) TODAY!\n\n'
+        html += 'Visit our site for the links to join! ' + body
+        html += '\n\n' + self.__post_signature__(insta=True)
 
-# Legacy
-"""
-def build(links):
-    <snip>
-        # One last check for missing names
-        for key in build_keys:
-            if not links[key]['name']:
-                print(f'  Missing name \'{key}\'')
-                name = get_name(links[key]['link'], key)
-                if name:
-                    links[key]['name'] = name
-                else:
-                    print(f'    Warning, \'{key}\' is still missing attribute \'name\'')
+        self._create_txt_file_('ZZZ', html)
 
-def get_name(link, key):
+    def build_fb_links(self, name, embed):
+        html = '== WELCOME PAGE ==\n\n'
+        html += '<div><span class="clovercustom" style="font-size: 0.915em;">Get the latest updates from The Oregon Community staff here.  Past videos can all be found in the MEDIA tab or by clicking here.</span></div><div><br><br></div>\n'
+        html += '<iframe src="'
+        html += embed
+        html += ';show_text=false&amp;width=734&amp;height=411&amp;appId" width="734" height="411" style="border:none;overflow:hidden" scrolling="no" frameborder="0" allowtransparency="true" allow="encrypted-media" allowfullscreen="true"></iframe>\n'
+        html += '<p><br></p>\n'
+        html += '<p style="font-size: 1.3072em;">'
+        html += name
+        html += '<br></p>'
+        html += '\n\n\n== VIDEOS PAGE ==\n\n'
 
-    # Can get a lot of other metadata from this if needed
-    name = ''
-    print(f'  Fetching title for \'{key}\'...')
-    try:
-        if link.startswith('https://youtu.be'):
-            params = {'format': 'json', 'url': link}
-            url = 'https://www.youtube.com/oembed'
-            query_string = urllib.parse.urlencode(params)
-            url = url + '?' + query_string
-            with urllib.request.urlopen(url) as response:
-                response_text = response.read()
-                data = json.loads(response_text.decode())
-            name = data['title']
+        # Update facebook html file
+        filename = 'fb_iframe.txt'
+        with open(self.outpath + filename, 'w') as f:
+            f.writelines(html)
+        pyperclip.copy(html)
+        print(filename + ' updated. iframe copied to clipboard.')
 
-        elif key == 'kids':
-            name = 'Watch with your kids... this is fun.'
-        elif key == 'elem':
-            name = 'This one is for the big kids.'
-        elif key == 'ms':
-            name = 'A video for the preteen audience'
+    def _load_json_(self, filename):
+        try:
+            with open(self.scriptpath + filename) as f:
+                data = json.load(f)
+        except Exception as e:
+            sys.exit(f'  Unable to load JSON data. {e}')
+        return data
+
+    def _update_links_(self):
+        """Update links dict for key (arg1) """
+        link = self.args[0]
+        key = self.args[1]
+        timestamp = dt.datetime.now().strftime('%m/%d/%Y %H:%M:%S')
+        if link is None:
+            self.__blank__(key, timestamp)
+            return
+        elif link.startswith('-'): # Rename title command
+            temp_title = link.split('-')[1]
+            self.db[key]['title'] = temp_title
+            print(f'    Title \'{temp_title}\' updated for \'{key}\'.')
+            return
         else:
-            name = ''
-        print('    Sucessfully updated title.')
-    except Exception as e:
-        print(f'    Failed to fetch name. Error: {e}')
-    return name
+            self.db[key]['title'] = self.default_title[key]
+        if self.vidtype == 'yt':
+            meta = self._get_yt_meta_(link)
+        elif self.vidtype == 'fb':
+            meta = self._get_fb_meta_(link)
+        self.db[key]['link'] = link
 
-def get_date(link):
+        # If one video for both age groups
+        if not self.db['elem']['link']:
+            self.db['kids']['title'] = 'KIDS COMMUNITY VIDEO'
+            self.db['elem']['title'] = ''
+        else:
+            self.db['kids']['title'] = 'PRE-K VIDEO'
+            self.db['elem']['title'] = 'ELEMENTARY VIDEO'
 
-    strdate = ''
-    print('  Fetching date...')
-    if link.startswith('https://youtu.be'):
-        soup = get_meta(link)
-        if soup:
-            date = soup.find("strong", attrs={"class": "watch-time-text"}).text
-            if date.startswith('Pr'):
-                date = date.split('Premiered ')
-            elif date.startswith('Pu'):
-                date = date.split('Published on ')
-            elif date.startswith('U'):
-                date = date.split('Uploaded on ')
+        self.db[key]['name'] = meta['name']
+        self.db[key]['stamp'] = timestamp
+        self.db[key]['id'] = meta['id']
+        self.db[key]['date'] = meta['published']
+        self.db[key]['thumb'] = meta['thumb']
+        self.db[key]['embed'] = meta['embed']
         try:
-            print('    Sucessfully updated date.')
-            strdate = date[1]
-        except IndexError:
-            print('    Failed to aquire date.')
-    return strdate
-
-def get_thumb(key, links, slug):
-    link = links[key]['link']
-    #if key == 'main':
-    #    image_type = '/0.jpg'
-    if link.startswith('https://youtu.be'):
-        thumb = 'http://img.youtube.com/vi/' + slug + '/maxresdefault.jpg'
-        try:
-            urllib.request.urlretrieve(thumb)
+            post_date = self.db['main']['date']
+            dt_date = dt.datetime.strptime(post_date, '%Y-%m-%d')
         except:
-            thumb = 'http://img.youtube.com/vi/' + slug + '/0.jpg'
-    elif link.startswith('https://www.facebook'):
-        permalink = get_permalink(link)
-        postid = facebook_data(permalink)['id']
-        thumb = facebook_data(postid + '?fields=full_picture')['full_picture']
-    elif link.startswith('https://www.gominno'):
-        thumb = links['recurring']['minnow']
-    return thumb
+            dt_date = dt.datetime.now()
+        self.db['service']['date'] = self.__get_sunday_date__(dt_date)
+        return
 
-def get_meta(link):
-    print('    Processing metadata...')
-    page = urllib.request.urlopen(link)
-    soup = BeautifulSoup(page.read(), "html.parser")
-    return soup
+    def _create_txt_file_(self, title, text):
+        # Create output file
+        timestamp = dt.datetime.now().strftime('%m%d%Y_%H%M%S')
+        filename = title + '_' + timestamp +'.txt'
+        try:
+            with open(self.outpath + filename, 'w') as f:
+                f.writelines(text)
+            print(f'\nFile \'{filename}\' sucessfully created in {self.outpath}.')
+        except:
+            print(f'\nFile \'{filename}\' could not be created.')
 
-def format_embed(link, code):
-    if link.startswith('https://youtu.be'):
-        embed = 'https://www.youtube.com/embed/' + code
-    elif link.startswith('https://www.facebook.com'):
-        page = link.split('/')[-3]
-        embed = 'https://www.facebook.com/plugins/video.php?href=https%3A%2F%2Fwww.facebook.com%2F' + page + '%2Fvideos%2F' + code + '&amp'
-    else:
-        embed = ''
-    return embed
+    def _copy_links_(self, keys):
+        """Copies urls in keys to the clipboard"""
+        content = ''
+        outmessage = ''
+        for key in keys:
+            link = self.db[key]['link']
+            if link:
+                content += self.db[key]['title'] + '\n' + link +'\n\n'
+                if key == keys[len(keys) -1]:
+                    outmessage += ' and'
+                outmessage += ' \'' + key + '\''
+                if key != keys[len(keys) -1]:
+                    outmessage += ','
+        pyperclip.copy(content)
+        sys.exit(f'Links for{outmessage} copied to clipboard.')
 
-def get_id(link):
-    code = link.split('/')[-1]
-    return code
+    def _update_json_(self, arg=None):
+        with open(self.scriptpath + self.dbfile, 'w') as f:
+            json.dump(self.db, f)
+        if arg:
+            sys.exit(f'Link \'{arg}\' updated.')
+        else:
+            sys.exit()
 
-def get_soup(link):
-    print('    Processing metadata...')
-    page = urllib.request.urlopen(link)
-    return BeautifulSoup(page.read(), "html.parser")
-
-def get_yt_meta(link):
-    soup = get_soup(link)
-    if soup:
-        meta_dict = {}
+    def _get_yt_meta_(self, link):
         lookup = {'meta' : 'content', 'link' : 'href'}
-        keys = ['name', 'datePublished', 'videoId', 'thumbnailUrl', 'embedUrl']
-        for attr in lookup.keys():
+        properties = {'itemprop' : ['name', 'datePublished', 'videoId', 'thumbnailUrl', 'embedUrl']}
+        meta = self.__get_meta__(link, lookup, properties)
+        try:
+            data = {'name' : meta['name'],
+                    'published': meta['datePublished'],
+                    'id': meta['videoId'],
+                    'thumb' : meta['thumbnailUrl'],
+                    'embed' : meta['embedUrl']
+                    }
+        except KeyError as e:
+            sys.exit(f'Unable to acquire attribute {e}. Video may be unlisted.')
+        return data
+
+    def _get_fb_meta_(self, link):
+        lookup = {'meta' : 'content', 'link' : 'href'}
+        properties = {'property' : ['og:title', 'og:image'], 'rel' : [['canonical']]}
+        meta = self.__get_meta__(link, lookup, properties)
+        #print(meta)
+        try:
+            name = meta['og:title']
+            url = meta['[\'canonical\']']
+            thumb = html.unescape(meta['og:image'])
+        except KeyError:
+            sys.exit('Error: Video is not public, cannot fetch metadata.')
+        vidid = url.split('/')[-2]
+        page = url.split('/')[3]
+        embed = 'https://www.facebook.com/plugins/video.php?href=https%3A%2F%2Fwww.facebook.com%2F' + page + '%2Fvideos%2F' + vidid + '&amp'
+        try:
+            data = {'name' : name,
+                    'published' : '',
+                    'id' : vidid,
+                    'thumb' : thumb,
+                    'embed' : embed
+                    }
+        except KeyError as e:
+            sys.exit(f'Unable to acquire attribute {e}. Video may be private.')
+        return data
+
+    def __validate_inputs__(self):
+        """Returns argv[1] and argv[2] after ensuring proper usage and formatting"""
+        if len(sys.argv) < 2 or sys.argv[1].lower() == 'help':
+            sys.exit(self.help)
+        arg1 = sys.argv[1]
+        try:
+            arg2 = sys.argv[2]
+        except IndexError:
+            arg2 = None
+        if arg1 == 'listall':
+            # list current data in JSON
+            sys.exit(self.__print_json_list__())
+        elif arg1 == 'list':
+            sys.exit(self.__print_json_list__(keys=self.default_keys['service']))
+        elif arg1 == 'build':
+            self.build()
+        elif arg1 == 'ytlinks':
+            self._copy_links_(self.default_keys['kids'])
+        elif arg1 == 'fbpost':
+            post = self.fb_post_text(arg2)
+            pyperclip.copy(post)
+            sys.exit('Facebook post copied to clipboard.')
+        elif arg1 == 'instapost':
+            post = self.insta_post_text(arg2)
+            pyperclip.copy(post)
+            sys.exit('Instagram post copied to clipboard.')
+        elif arg1 == 'sig':
+            sig = self.__post_signature__()
+            pyperclip.copy(sig)
+            sys.exit('Post signature copied to clipboard.')
+        elif arg1 == 'thumb':
+            while True:
+                if arg2 in self.db.keys():
+                    try:
+                        self.download_thumb(arg2)
+                        sys.exit()
+                    except:
+                        sys.exit()
+                else:
+                    arg2 = self.__invalid_key__(arg2)
+        elif arg1 == 'thumbs':
+            for key in self.default_keys['main']:
+                try:
+                    self.download_thumb(key)
+                except:
+                    continue
+            sys.exit()
+        elif arg1 == 'frame':
+            while True:
+                if arg2 in self.db.keys():
+                    pyperclip.copy(self.__build_video_html__(arg2))
+                    sys.exit('Video html copied to clipboard.')
+                else:
+                    arg2 = self.__invalid_key__(arg2)
+        elif arg1 == 'zzz':
+            self.build_zzz_html()
+            sys.exit()
+        elif arg1.startswith('www'):
+            arg1 = 'https://' + arg1
+        elif arg1.startswith('https://www.youtube.com'):
+            arg1 = self.__format_short__(arg1)
+        elif 'facebook' in arg1:
+            self.vidtype = 'fb'
+        elif 'zoom' in arg1:
+            while True:
+                if arg2 in self.db.keys():
+                    self.db[arg2]['zoom'] = arg1
+                    self._update_json_(arg2)
+                else:
+                    arg2 = self.__invalid_key__(arg2)
+        elif arg1.startswith('-'): # Renaming title
+            return arg1, arg2
+        elif arg1 == 'blank':
+            arg1 = None
+        elif arg1 and not arg1.startswith('https://'):
+            sys.exit('Error, target must be a valid url or command.\n' + self.help)
+        if arg2 is None or arg2 not in self.db.keys():
+            arg2 = self.__invalid_key__(arg2)
+        if not self.vidtype:
+            self.vidtype = 'yt'
+        return arg1, arg2
+
+    def __invalid_key__(self, key):
+        """Validates missing keys, ensures proper usage"""
+        print(f'\'{key}\' is not a valid key.')
+        for k in self.default_keys['main']:
+            print(f'  {k}')
+        ky = input('Please choose a key from the above list. Type \'exit\' to exit: ')
+        if ky.lower() == 'exit':
+            sys.exit()
+        return ky
+
+    def __print_json_list__(self, json_dict=None, keys=None):
+        if not json_dict:
+            json_dict = self.db
+        if not keys:
+            keys = json_dict.keys()
+        for key in keys:
+            print(key)
+            try:
+                for k, item in json_dict[key].items():
+                    print(f'   {k} : {item}')
+            except:
+                pass
+        return
+
+    def __post_signature__(self, insta=False):
+        sig = self.db['recurring']['sig']['html']
+        if insta:
+            link = 'Link in bio.\n'
+        else:
+            link = self.db['recurring']['sig']['link'] + '\n'
+        tags = self.db['recurring']['sig']['id'] # hashtags
+        return sig + link + tags
+
+    def __build_video_html__(self, key, w=734, h=415):
+        """Return html for video container that includes title and iframe"""
+        link = self.db[key]['link']
+        title = self.db[key]['title']
+        if link:
+            if link.startswith('https://youtu.be'):
+                html = self.build_iframe(key, w, h) + '\n'
+                html += '<p style="font-size: 1.8301em;">' + title + '</p>\n'
+                html += '<p>' + self.db[key]['name'] + '</p>\n'
+                html += '<p><br></p><p><br></p><p><br></p>\n'
+            else:
+                html = self.__build_video_link__(key)
+        else:
+            html = ''
+        return html
+
+    def __build_video_link__(self, key):
+        link = self.db[key]['link']
+        title = self.db[key]['title']
+        html = '<p style="font-size: 1.8301em;"><a href="'
+        html += link
+        html += '" data-location="external" data-detail="'
+        html += link
+        html += '" data-category="link" target="_blank" class="cloverlinks">'
+        html += title
+        html += '</a></p>\n'
+        html += '<p><a href="'
+        html += link
+        html += '" data-location="external" data-detail="'
+        html += link
+        html += '" data-category="link" target="_blank" class="cloverlinks">Click here</a></p>'
+        html += '<p><br></p><p><br></p><p><br></p>\n'
+        return html
+
+    def __build_past_kids__(self, key, title=None):
+        link = self.db['past'][key]['link']
+        html = ''
+        if link:
+            past_date = self.db['past']['date']
+            if title is None:
+                title = self.db['past'][key]['title']
+            html += '<p>'
+            html += past_date
+            html += '</p><p><span class="clovercustom" style="font-size: 0.625em;">'
+            html += title
+            html += '</span></p>\n'
+            html += link
+            html += '\n\n'
+        return html
+
+    def __update_last__(self):
+        """When build is called, the current database data is moved to 'last'"""
+        timestamp = dt.datetime.now().strftime('%m/%d/%Y %H:%M:%S')
+        # Update holders, this works because it will be reset in the 'build' if the links match
+        self.db['last_holder'] = self.db['last']
+        self.db['past_holder'] = deepcopy(self.db['past']) # deepcopy creates a new object instance and removes link to past values
+
+        # Update last to current
+        self.db['last'] = deepcopy(self.db['main'])
+        self.db['last']['title'] += ' - ' + deepcopy(self.db['main']['name'])
+        self.db['last']['stamp'] = timestamp
+        self.__update_past__()
+
+    def __update_past__(self):
+        # Update past to current
+        self.db['past']['date'] = self.db['service']['date']
+        for key in self.db:
+            if key in self.db['past']:
+                title = self.db[key]['title']
+                if key == 'main':
+                    title = self.db[key]['name']
+                self.db['past'][key]['link'] = self.db[key]['link']
+                self.db['past'][key]['title'] = title
+
+    def __blank__(self, key, timestamp):
+        """Removes data from a key in database"""
+        yn = input(f'Remove data from \'{key}\'?  Y/N : ')
+        if yn.lower() == 'y':
+            for item in self.db[key]:
+                self.db[key][item] = ''
+            self.db[key]['stamp'] = timestamp
+
+    def __get_meta__(self, link, lookup, properties):
+        print('    Processing metadata...')
+        page = urllib.request.urlopen(link)
+        soup = BeautifulSoup(page.read(), "html.parser")
+        meta_dict = {}
+        for attr in lookup:
+            #print(f'{attr=}')
             for itm in soup.find_all(attr):
-                ip = itm.get('itemprop')
-                content = itm.get(lookup[attr])
-                for key in keys:
-                    if content and ip == key:
-                        meta_dict[key] = content
-        return {'name' : meta_dict['name'],
-                'published': meta_dict['datePublished'], 
-                'id': meta_dict['videoId'],
-                'thumb' : meta_dict['thumbnailUrl'],
-                'embed' : meta_dict['embedUrl']}
-    else:
-        sys.exit('Error: could not fetch metadata')
+                #print(f'{itm=}') # meta, link
+                for prop in properties:
+                    #print(f'{prop=}') # property
+                    for p in properties[prop]: # og:title, canonical
+                        #print(f'{p=}')
+                        ip = itm.get(prop) # property
+                        #print(type(ip))
+                        content = itm.get(lookup[attr]) # content, href
+                        #print(f'{ip=}')
+                        if content and ip == p:
+                            #print(f'{p=}')
+                            #print(f'{content=}')
+                            #if content:
+                            meta_dict[str(p)] = content
+        return meta_dict
 
-def format_fb_embed(link, code):
-    page = link.split('/')[-3]
-    embed = 'https://www.facebook.com/plugins/video.php?href=https%3A%2F%2Fwww.facebook.com%2F' + page + '%2Fvideos%2F' + code + '&amp'
-    return embed
+    def __get_sunday_date__(self, stamp):
+        """Return the date of the nearest upcoming Sunday"""
+        days_ahead = 6 - stamp.weekday() # 6 = Sunday
+        if days_ahead <= 0:
+            days_ahead += 7
+        sunday = stamp + dt.timedelta(days_ahead)
+        sunday = sunday.strftime('%B %d, %Y')
+        return sunday
 
-def update_links(); # legacy assignments
-    
-
-    try:
-        links[key]['stamp'] = timestamp
-    except:
-        links[key]['stamp'] = ''
-    try:
-        links[key]['id'] = code
-    except:
-        links[key]['id'] = ''
-    try:
-        post_date = get_date(link)
-        links[key]['date'] = post_date
-    except:
-        print('    No date data found.')
-        links[key]['date'] = ''
-        links['service']['date'] = ''
-    try:
-        post_date = links['main']['date']
-        dt_date = dt.datetime.strptime(post_date, '%B %d, %Y')
-    except:
-        dt_date = dt.datetime.now()
-    links['service']['date'] = get_sunday_date(dt_date)
-
-    try:
-        links[key]['thumb'] = get_thumb(key, links, code)
-    except:
-        links[key]['thumb'] = ''
-    try:
-        links[key]['embed'] = format_embed(link, code)
-    except:
-        links[key]['embed'] = ''
-    return links
-
-def get_permalink(link):
-    print('  Fetching permalink...')
-    page = urllib.request.urlopen(link)
-    soup = BeautifulSoup(page.read(), "html.parser")
-    perma = ''
-    for lnk in soup.find_all('meta'):
-        url = lnk.get('content')
-        if url and url.startswith('https://'):
-            perma = url.split('permalink%2F')[1][:-3]
-    return perma
-
-def update_fb(links):
-    link = links['fb']['link']
-    permalink = get_permalink(link)
-    fbdata = facebook_data(permalink)
-    
-    try:
-        name = fbdata['message']
-    except KeyError:
-        print(f'    Could not process \'name\'.')
-        name = ''
-    links['fb']['name'] = name
-    embed = links['fb']['embed']
-    date = fbdata['created_time']
-    date = dt.datetime.strptime(date, '%Y-%m-%dT%H:%M:%S+0000')
-    links['fb']['date'] = date.strftime('%B %d, %Y')
-    build_fb_links(name, embed)
-    thumb = links['fb']['thumb']
-    download_thumb('fb', thumb)
-
-def facebook_data(link):
-    token = load_json(PATH + 'uservars.json')['fb']['usertoken']
-    graph = facebook.GraphAPI(access_token=token)
-    data = graph.get_object(id=link)
-    return data
-"""
+    def __format_short__(self, url):
+        """Reformats long YouTube urls to short"""
+        slug = url.split('=')[-1]
+        return 'https://youtu.be/' + slug
 
 if __name__ == '__main__':
-    main()
+    HTML_Generator('links.json', 'TOC LINKS')
 
 # TODO FUTURE
     # TODO scrape facebook for new video post at regular intervals
