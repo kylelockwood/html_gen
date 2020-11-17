@@ -15,9 +15,7 @@ from copy import deepcopy
 import pyperclip
 from bs4 import BeautifulSoup
 
-#TODO fix vidtype to read from DB
-#TODO on build_frame fix facebook iframe
-
+# TODO build function to replace ann, zzz, event, etc DRY
 
 class HTML_Generator:
     def __init__(self, dbfile, outpath=''):
@@ -35,8 +33,9 @@ class HTML_Generator:
                      '  blank <key>        - sets empty strings to data in a key\n'
                      '  -<new title> <key> - replaces the title attribute in the <key>.  Will return to default after link update\n'
                      '  build              - creates document titled \'BUILD_<timestamp>.txt\' containing relevant json data formatted for html\n'
-                     '  event <key>        - creates document titled \'EVENT_<timestamp>.txt\' containing html and social media posts for <key> event'
+                     '  event <key>        - creates document titled \'EVENT_<timestamp>.txt\' containing html and social media posts for <key> event\n'
                      '  zzz                - creates document titled \'ZZZ_<timestamp>.txt\' containing html and social media posts for Zecond Zunday Zoom\n'
+                     '  ann                - creates document titled \'ANN_<timestamp>.txt\' containing html and social media posts for Announcements\n'
                      '  ytlinks            - copies \'kids\', \'elem\', and \'ms\' links to the clipboard for YouTube description\n'
                      '  fbpost <type>      - allowed types are "serv", "ann" or "ev" with optional sub key, copies relevant Facebook post to the clipboard\n'
                      '  instapost <type>   - allowed types are "serv" , "ann" or "ev" with optional sub key, copies relevant Instagram post to the clipboard\n'
@@ -65,13 +64,13 @@ class HTML_Generator:
     def app(self):
         print('Loading data...')
         self.db = self._load_json_(self.dbfile)
-        self.args = self.validate_inputs()
+        self.args = self._validate_inputs()
         print('Updating data...')
         self._update_db_()
         print('Saving data...')
-        self._update_json_(self.args[1])
+        self._update_json(self.args[1])
 
-    def validate_inputs(self):
+    def _validate_inputs(self):
         """Returns argv[1] and argv[2] after ensuring proper usage and formatting"""
         if len(sys.argv) < 2 or sys.argv[1].lower() == 'help':
             sys.exit(self.help)
@@ -86,57 +85,59 @@ class HTML_Generator:
             arg3 = None
         if arg1 == 'listall':
             # list current data in JSON
-            sys.exit(self.__print_json_list__())
+            sys.exit(self._print_json_list())
         elif arg1 == 'list':
-            sys.exit(self.__print_json_list__(keys=self.default_keys['service']))
+            sys.exit(self._print_json_list(keys=self.default_keys['service']))
         elif arg1 == 'build':
-            self.build()
+            self._build()
         elif arg1 == 'ytlinks':
             self._copy_links_(self.default_keys['kids'])
         elif arg1 == 'fbpost':
-            post = self.fb_post_text(arg2, arg3)
+            post = self._fb_post_text(arg2, arg3)
             pyperclip.copy(post)
             sys.exit('Facebook post copied to clipboard.')
         elif arg1 == 'instapost':
-            post = self.insta_post_text(arg2, arg3)
+            post = self._insta_post_text(arg2, arg3)
             pyperclip.copy(post)
             sys.exit('Instagram post copied to clipboard.')
         elif arg1 == 'sig':
-            sig = self.__post_signature__()
+            sig = self._post_signature()
             pyperclip.copy(sig)
             sys.exit('Post signature copied to clipboard.')
         elif arg1 == 'thumb':
             while True:
                 if arg2 in self.db.keys():
                     try:
-                        self.download_thumb(arg2)
+                        self._download_thumb(arg2)
                         sys.exit()
                     except:
                         sys.exit()
                 else:
-                    arg2 = self.__invalid_key__(arg2)
+                    arg2 = self._invalid_key(arg2)
         elif arg1 == 'thumbs':
             for key in self.default_keys['main']:
                 try:
-                    self.download_thumb(key)
+                    self._download_thumb(key)
                 except:
                     continue
             sys.exit()
         elif arg1 == 'frame':
             while True:
                 if arg2 in self.db.keys():
-                    pyperclip.copy(self.__generate_video_html__(arg2))
+                    pyperclip.copy(self._generate_video_html(arg2))
                     sys.exit('Video html copied to clipboard.')
                 else:
-                    arg2 = self.__invalid_key__(arg2)
+                    arg2 = self._invalid_key(arg2)
         elif arg1 == 'zzz':
-            self.build_zzz_html()
+            self._build_zzz_html()
         elif arg1 == 'event':
-            self.build_event(arg2)
+            self._build_event(arg2)
+        elif arg1 == 'ann':
+            self._build_ann()
         elif arg1.startswith('www'):
             arg1 = 'https://' + arg1
         elif arg1.startswith('https://www.youtube.com'):
-            arg1 = self.__format_short__(arg1)
+            arg1 = self._format_short(arg1)
         elif 'facebook' in arg1:
             self.vidtype = 'fb'
         elif 'zoom' in arg1:
@@ -152,12 +153,12 @@ class HTML_Generator:
                     codes = self._get_zoom_codes(arg1)
                     self.db['event'][key]['id'] = codes[0]
                     self.db['event'][key]['pass'] = codes[1]
-                    self._update_json_(key)
+                    self._update_json(key)
                 elif arg2 in self.db.keys():
                     self.db[arg2]['zoom'] = arg1
-                    self._update_json_(arg2)
+                    self._update_json(arg2)
                 else:
-                    arg2 = self.__invalid_key__(arg2)
+                    arg2 = self._invalid_key(arg2)
         elif arg1.startswith('-'): # Renaming title
             return arg1, arg2
         elif arg1 == 'blank':
@@ -165,51 +166,36 @@ class HTML_Generator:
         elif arg1 and not arg1.startswith('https://'):
             sys.exit('Error, target must be a valid url or command.\n' + self.help)
         if arg2 is None or arg2 not in self.db.keys():
-            arg2 = self.__invalid_key__(arg2)
+            arg2 = self._invalid_key(arg2)
         if not self.vidtype:
             self.vidtype = 'yt'
         return arg1, arg2
 
-    def _get_zoom_codes(self, link):
-        code = link.split('j/')[1]
-        pw = None
-        try:
-            pw = code.split('?pwd=')[1]
-            code = code.split('?')[0]
-        except IndexError:
-            pass
-        return code, pw
-
-    def build(self):
+    def _build(self):
         """Create outfile that contains html for site update"""
         print('Build current list?')
-        self.__print_json_list__(keys=self.default_keys['service'])
+        self._print_json_list(keys=self.default_keys['service'])
         build_keys = self.default_keys['build']
         kids_keys = self.default_keys['kids']
         yn = input('Y/N ')
         if yn.lower() == 'y':
             # FB Post
-            html = '== FACEBOOK POST ==\n\n'
-            html += self.fb_post_text('serv')
-
-            # insta post
-            html += '\n\n\n== INSTAGRAM POST ==\n\n'
-            html += self.insta_post_text('serv')
-
+            text = self._build_social_media('serv')
+            
             # Welcome page
-            html += '\n\n\n== WELCOME PAGE ==\n\n'
+            text += '\n\n\n== WELCOME PAGE ==\n\n'
             for key in build_keys:
-                html += self.__generate_video_html__(key)
+                text += self._generate_video_html(key)
 
             # Online Services page
-            html += '\n\n\n== ONLINE SERVICES PAGE ==\n\n'
-            html += self.__generate_video_html__('main')
+            text += '\n\n\n== ONLINE SERVICES PAGE ==\n\n'
+            text += self._generate_video_html('main')
 
             # Past online services
-            html += '\n\n\n== PAST ONLINE SERVICES ==\n\n'
+            text += '\n\n\n== PAST ONLINE SERVICES ==\n\n'
             title = self.db['past']['main']['title']
             title = title.split(' - ')[0]
-            html += self. __generate_past_kids__('main', title=title)
+            text += self. _generate_past_kids('main', title=title)
 
             # If past links are the same as current from build, recall the previous links
             if self.db['last']['link'] == self.db['main']['link']:
@@ -217,93 +203,90 @@ class HTML_Generator:
                 self.db['past'] = self.db['past_holder']
 
             # Kids Community Videos
-            html += '\n\n\n== KIDS COMMUNITY VIDEOS ==\n\n'
-            html += '<p>Here you will find videos for the Kid\'s Community and Middle School Ministry.&nbsp; Full online service videos can be found in the <a href="/media/online-services" data-location="existing" data-detail="/media/online-services" data-category="link" target="_self" class="cloverlinks">MEDIA/ONLINE SERVICES</a> tab</p><p><br></p><p><br></p><p><br></p>'
+            text += '\n\n\n== KIDS COMMUNITY VIDEOS ==\n\n'
+            text += '<p>Here you will find videos for the Kid\'s Community and Middle School Ministry.&nbsp; Full online service videos can be found in the <a href="/media/online-services" data-location="existing" data-detail="/media/online-services" data-category="link" target="_self" class="cloverlinks">MEDIA/ONLINE SERVICES</a> tab</p><p><br></p><p><br></p><p><br></p>'
             for key in kids_keys:
-                html += self.__generate_video_html__(key)
+                text += self._generate_video_html(key)
 
             # Past Kid's Videos
-            html += '\n\n\n== KIDS PAST VIDEOS ==\n\n'
+            text += '\n\n\n== KIDS PAST VIDEOS ==\n\n'
             for key in kids_keys:
-                html += self. __generate_past_kids__(key)
+                text += self. _generate_past_kids(key)
 
             # Kids Community thumbs
-            html += '\n\n\n== THUMBNAILS ==\n\n'
+            text += '\n\n\n== THUMBNAILS ==\n\n'
             for key in build_keys:
-                html += self.db[key]['thumb'] + '\n'
+                text += self.db[key]['thumb'] + '\n'
 
             # Create output file
-            self._create_txt_file_('BUILD', html)
+            self._create_txt_file_('BUILD', text)
 
             # Download the main service thumbnail
-            self.download_thumb('main')
+            self._download_thumb('main')
 
             # Thumbnails are generally downloaded earlier in the week to be used in the YT description,
             # so downloading them here is redundant. Leaving the code for future use.
             """
             # Download all thumbnails
             for key in build_keys:
-                thumb = links[key]['thumb']
-                download_thumb(key, thumb)
+                thumb = self.db[key]['thumb']
+                self._download_thumb(key, thumb)
             """
 
             # Update json
-            self.__update_last__()
-            self._update_json_()
+            self._update_last()
+            self._update_json()
         else:
             sys.exit()
 
-    def build_zzz_html(self):
-        """Builds html and social media posts for  specific service"""
+    def _build_zzz_html(self):
+        """Builds html and social media posts for Zecond Zunday Zoom service"""
         body = 'Around 10:30, kids will be "dismissed" during the service to join their own Zoom meetings lead by our Kid\'s Community and Middle School Ministry teams. You will need a separate Zoom account if you will be participating in the main service Zoom simultaneously.'
-        html = '=== HOME PAGE ===\n\n'
-        html += '<p style="font-size: 0.9722em;">'
-        html += 'Click the Zoom links below to join! '  + body
-        html += '</p><p style="font-size: 1.5278em;"><br></p><p style="font-size: 1.5278em;">10am Sunday</p><p style="font-size: 0.6944em;"><br></p>'
+        text = '=== HOME PAGE ===\n\n'
+        text += '<p style="font-size: 0.9722em;">'
+        text += 'Click the Zoom links below to join! '  + body
+        text += '</p><p style="font-size: 1.5278em;"><br></p><p style="font-size: 1.5278em;">10am Sunday</p><p style="font-size: 0.6944em;"><br></p>'
         for key, title in self.zoom_titles:
             url = self.db[key]['zoom']
-            html += '<p><a href="'
-            html += url
-            html += '" class="cloverlinks" data-category="link" data-location="external" data-detail="'
-            html += url
-            html += '" target="_self" style="font-size: 1.25em;">'
-            html += title
-            html += ' - click here</a></p>'
+            text += '<p><a href="'
+            text += url
+            text += '" class="cloverlinks" data-category="link" data-location="external" data-detail="'
+            text += url
+            text += '" target="_self" style="font-size: 1.25em;">'
+            text += title
+            text += ' - click here</a></p>'
             if key == 'main':
-                html += '<p><br></p><p><br></p><p><br></p><p style="font-size: 1.5278em;">Around 10:30am</p><p style="font-size: 0.5556em;"></p>'
+                text += '<p><br></p><p><br></p><p><br></p><p style="font-size: 1.5278em;">Around 10:30am</p><p style="font-size: 0.5556em;"></p>'
             elif key == 'kids':
-                html += '<p><br></p>'
+                text += '<p><br></p>'
 
-        html += '\n\n\n\n=== FB POST ===\n\n'
-        html += 'ZECOND. ZUNDAY. ZOOM(V.) TODAY!\n\n'
-        html += 'Click the Zoom links below to join! ' + body
-        html += '\n\n10am Sunday\n'
+        text += '\n\n\n\n=== FB POST ===\n\n'
+        text += 'ZECOND. ZUNDAY. ZOOM(V.) TODAY!\n\n'
+        text += 'Click the Zoom links below to join! ' + body
+        text += '\n\n10am Sunday\n'
         for key, title in self.zoom_titles:
-            html += '\n' + title + '\n'
-            html += self.db[key]['zoom']
+            text += '\n' + title + '\n'
+            text += self.db[key]['zoom']
             if key == 'main':
-                html += '\n\nAround 10:30am\n'
+                text += '\n\nAround 10:30am\n'
             elif key == 'kids':
-                html += '\n'
+                text += '\n'
 
-        html += '\n\n\n\n=== INSTA POST ===\n\n'
-        html += 'ZECOND. ZUNDAY. ZOOM(V.) TODAY!\n\n'
-        html += 'Visit our site for the links to join! ' + body
-        html += '\n\n' + self.__post_signature__(insta=True)
+        text += '\n\n\n\n=== INSTA POST ===\n\n'
+        text += 'ZECOND. ZUNDAY. ZOOM(V.) TODAY!\n\n'
+        text += 'Visit our site for the links to join! ' + body
+        text += '\n\n' + self._post_signature(insta=True)
 
-        self._create_txt_file_('ZZZ', html)
+        self._create_txt_file_('ZZZ', text)
         sys.exit()
 
-    def build_event(self, key=None):
+    def _build_event(self, key=None):
         if not key:
             key = self._choose_key('event')
         elif key not in self.db['event']:
             sys.exit(f'\'{key}\' is not a valid key')
         db = self.db['event'][key]
-        text = '== FACEBOOK POST ==\n\n'
-        text += self.fb_post_text('ev', key)
-        text += '\n\n\n=== INSTAGRAM POST ===\n\n'
-        text += self.insta_post_text('ev', key)
+        text = self._build_social_media('ev', key)
         text += '\n\n\n== HOMEPAGE HTML ==\n\n<p>'
         text += db['title']
         text += '</p><p>Click the image below or use the following Zoom info to log in!<br></p><p><br></p><p>id : '
@@ -314,23 +297,39 @@ class HTML_Generator:
         self._create_txt_file_('EVENT', text)
         sys.exit()
 
-    def build_fb_links(self, name, embed):
-        html = '== WELCOME PAGE ==\n\n'
-        html += '<div><span class="clovercustom" style="font-size: 0.915em;">Get the latest updates from The Oregon Community staff here.  Past videos can all be found in the MEDIA tab or by clicking here.</span></div><div><br><br></div>\n'
-        html += '<iframe src="'
-        html += embed
-        html += ';show_text=false&amp;width=734&amp;height=411&amp;appId" width="734" height="411" style="border:none;overflow:hidden" scrolling="no" frameborder="0" allowtransparency="true" allow="encrypted-media" allowfullscreen="true"></iframe>\n'
-        html += '<p><br></p>\n'
-        html += '<p style="font-size: 1.3072em;">'
-        html += name
-        html += '<br></p>'
-        html += '\n\n\n== VIDEOS PAGE ==\n\n'
+    def _build_social_media(self, key=None, sub=None, custom_text=None):
+        text = '== FACEBOOK POST ==\n\n'
+        text += self._fb_post_text(key, sub, custom_text)
+        text += '\n\n\n=== INSTAGRAM POST ===\n\n'
+        text += self._insta_post_text(key, sub, custom_text)
+        return text
+
+    def _build_ann(self):
+        db = self.db['ann']
+        text = self._build_social_media('ann')
+        text += '\n\n\n== HOMEPAGE HTML ==\n\n<p>'
+        text += db['title']
+        text += self._generate_video_html('ann')
+        self._create_txt_file_('ANN', text)
+        sys.exit()
+
+    def _build_fb_links(self, name, embed):
+        text = '== WELCOME PAGE ==\n\n'
+        text += '<div><span class="clovercustom" style="font-size: 0.915em;">Get the latest updates from The Oregon Community staff here.  Past videos can all be found in the MEDIA tab or by clicking here.</span></div><div><br><br></div>\n'
+        text += '<iframe src="'
+        text += embed
+        text += ';show_text=false&amp;width=734&amp;height=411&amp;appId" width="734" height="411" style="border:none;overflow:hidden" scrolling="no" frameborder="0" allowtransparency="true" allow="encrypted-media" allowfullscreen="true"></iframe>\n'
+        text += '<p><br></p>\n'
+        text += '<p style="font-size: 1.3072em;">'
+        text += name
+        text += '<br></p>'
+        text += '\n\n\n== VIDEOS PAGE ==\n\n'
 
         # Update facebook html file
         filename = 'fb_iframe.txt'
         with open(self.outpath + filename, 'w') as f:
-            f.writelines(html)
-        pyperclip.copy(html)
+            f.writelines(text)
+        pyperclip.copy(text)
         print(filename + ' updated. iframe copied to clipboard.')
 
     def _choose_key(self, sub=None):
@@ -349,7 +348,7 @@ class HTML_Generator:
                 sys.exit()
             print(f'\'{k}\' is not a valid option')
 
-    def fb_post_text(self, post_type, key=None):
+    def _fb_post_text(self, post_type, key=None, custom_text=None):
         """Returns the text for a FB post"""
         if post_type == 'serv':
             post = 'The Oregon Community at home\n\n'
@@ -372,11 +371,10 @@ class HTML_Generator:
         else:
             sys.exit(f'\'{post_type}\' is not a valid post type.')
 
-        sig = '\n\n' + self.db['event']['sig']['html'] + self.db['event']['sig']['link'] + '\n'
-        tags = self.db['event']['sig']['id']
-        return post + sig + tags
+        sig = '\n\n' + self._post_signature()
+        return post + sig
 
-    def insta_post_text(self, post_type, key=None):
+    def _insta_post_text(self, post_type, key=None, custom_text=None):
         if post_type == 'serv':
             post = 'The Oregon Community at home\n' + self.db['main']['name']
             post += '\nCheck out the video on our YouTube channel!'
@@ -391,10 +389,10 @@ class HTML_Generator:
         else:
             sys.exit(f'\'{post_type}\' is not a valid post type.')
         
-        sig = '\n\n' + self.__post_signature__(insta=True)
+        sig = '\n\n' + self._post_signature(insta=True)
         return post + sig
 
-    def download_thumb(self, key, thumb=None):
+    def _download_thumb(self, key, thumb=None):
         """Downloads the image associated with passed thumbnail url to OUTPATH"""
         timestamp = dt.datetime.now().strftime('%m%d%Y_%H%M%S')
         filename = timestamp + '_' + key + '_thumb.jpg'
@@ -420,7 +418,7 @@ class HTML_Generator:
         key = self.args[1]
         timestamp = dt.datetime.now().strftime('%m/%d/%Y %H:%M:%S')
         if link is None:
-            self.__blank__(key, timestamp)
+            self._blank(key, timestamp)
             return
         elif link.startswith('-'): # Rename title command
             temp_title = link.split('-')[1]
@@ -455,7 +453,7 @@ class HTML_Generator:
             dt_date = dt.datetime.strptime(post_date, '%Y-%m-%d')
         except:
             dt_date = dt.datetime.now()
-        self.db['service']['date'] = self.__get_sunday_date__(dt_date)
+        self.db['service']['date'] = self._get_sunday_date(dt_date)
         return
 
     def _create_txt_file_(self, title, text):
@@ -485,7 +483,7 @@ class HTML_Generator:
         pyperclip.copy(content)
         sys.exit(f'Links for{outmessage} copied to clipboard.')
 
-    def _update_json_(self, arg=None):
+    def _update_json(self, arg=None):
         with open(self.scriptpath + self.dbfile, 'w') as f:
             json.dump(self.db, f)
         if arg:
@@ -496,7 +494,7 @@ class HTML_Generator:
     def _get_yt_meta_(self, link):
         lookup = {'meta' : 'content', 'link' : 'href'}
         properties = {'itemprop' : ['name', 'datePublished', 'videoId', 'thumbnailUrl', 'embedUrl']}
-        meta = self.__get_meta__(link, lookup, properties)
+        meta = self._get_meta(link, lookup, properties)
         try:
             data = {'name' : meta['name'],
                     'published': meta['datePublished'],
@@ -506,13 +504,13 @@ class HTML_Generator:
                     'vidtype' : 'yt'
                     }
         except KeyError as e:
-            sys.exit(f'Unable to acquire attribute {e}. Video may be unlisted.')
+            sys.exit(f'Unable to acquire attribute {e}. Video may be set as private.')
         return data
 
     def _get_fb_meta_(self, link):
         lookup = {'meta' : 'content', 'link' : 'href'}
         properties = {'property' : ['og:title', 'og:image'], 'rel' : [['canonical']]}
-        meta = self.__get_meta__(link, lookup, properties)
+        meta = self._get_meta(link, lookup, properties)
         url = None
         #print(meta)
         try:
@@ -545,7 +543,17 @@ class HTML_Generator:
             sys.exit(f'Unable to acquire attribute {e}. Video may be private.')
         return data
 
-    def __invalid_key__(self, key):
+    def _get_zoom_codes(self, link):
+        code = link.split('j/')[1]
+        pw = None
+        try:
+            pw = code.split('?pwd=')[1]
+            code = code.split('?')[0]
+        except IndexError:
+            pass
+        return code, pw
+
+    def _invalid_key(self, key):
         """Validates missing keys, ensures proper usage"""
         print(f'\'{key}\' is not a valid key.')
         for k in self.default_keys['main']:
@@ -555,7 +563,7 @@ class HTML_Generator:
             sys.exit()
         return ky
 
-    def __print_json_list__(self, json_dict=None, keys=None):
+    def _print_json_list(self, json_dict=None, keys=None):
         if not json_dict:
             json_dict = self.db
         if not keys:
@@ -569,7 +577,7 @@ class HTML_Generator:
                 pass
         return
 
-    def __post_signature__(self, insta=False):
+    def _post_signature(self, insta=False):
         sig = self.db['event']['sig']['title']
         if insta:
             link = 'Link in bio.\n'
@@ -578,70 +586,70 @@ class HTML_Generator:
         tags = self.db['event']['sig']['html'] # hashtags
         return sig + link + tags
 
-    def __generate_video_html__(self, key, w=734, h=415):
-        """Return html for video container that includes title and iframe"""
+    def _generate_video_html(self, key, w=734, h=415):
+        """Return text for video container that includes title and iframe"""
         link = self.db[key]['link']
         title = self.db[key]['title']
         vidtype = self.db[key]['vidtype']
         if link:
             if vidtype == 'yt' or vidtype =='fb':
-                html = self.__generate_iframe__(key, w, h) + '\n'
-                html += '<p style="font-size: 1.8301em;">' + title + '</p>\n'
-                html += '<p>' + self.db[key]['name'] + '</p>\n'
-                html += '<p><br></p><p><br></p><p><br></p>\n'
+                text = self._generate_iframe(key, w, h) + '\n'
+                text += '<p style="font-size: 1.8301em;">' + title + '</p>\n'
+                text += '<p>' + self.db[key]['name'] + '</p>\n'
+                text += '<p><br></p><p><br></p><p><br></p>\n'
             else:
                 # No iframe just formatted hyperlink. Used for videos that don't allow embedding.
                 # This is validated when the meta data is processed (see: _get_*_meta())
-                html = self.__generate_video_link__(key)
+                text = self._generate_video_link(key)
         else:
-            html = ''
-        return html
+            text = ''
+        return text
 
-    def __generate_video_link__(self, key):
+    def _generate_video_link(self, key):
         link = self.db[key]['link']
         title = self.db[key]['title']
-        html = '<p style="font-size: 1.8301em;"><a href="'
-        html += link
-        html += '" data-location="external" data-detail="'
-        html += link
-        html += '" data-category="link" target="_blank" class="cloverlinks">'
-        html += title
-        html += '</a></p>\n'
-        html += '<p><a href="'
-        html += link
-        html += '" data-location="external" data-detail="'
-        html += link
-        html += '" data-category="link" target="_blank" class="cloverlinks">Click here</a></p>'
-        html += '<p><br></p><p><br></p><p><br></p>\n'
-        return html
+        text = '<p style="font-size: 1.8301em;"><a href="'
+        text += link
+        text += '" data-location="external" data-detail="'
+        text += link
+        text += '" data-category="link" target="_blank" class="cloverlinks">'
+        text += title
+        text += '</a></p>\n'
+        text += '<p><a href="'
+        text += link
+        text += '" data-location="external" data-detail="'
+        text += link
+        text += '" data-category="link" target="_blank" class="cloverlinks">Click here</a></p>'
+        text += '<p><br></p><p><br></p><p><br></p>\n'
+        return text
 
-    def __generate_iframe__(self, key, w=734, h=415):
-        """Return the iframe html for a link"""
+    def _generate_iframe(self, key, w=734, h=415):
+        """Return the iframe text for a link"""
         if self.db[key]['embed']:
-            html = '<iframe width="'+ str(w) +'" height="'+ str(h) +'" src="'
-            html += self.db[key]['embed']
-            html += '" frameborder="0" allow="accelerometer; autoplay; encrypted-media; gyroscope; picture-in-picture" allowfullscreen=""></iframe>'
+            text = '<iframe width="'+ str(w) +'" height="'+ str(h) +'" src="'
+            text += self.db[key]['embed']
+            text += '" frameborder="0" allow="accelerometer; autoplay; encrypted-media; gyroscope; picture-in-picture" allowfullscreen=""></iframe>'
         else:
-            html = ''
-        return html
+            text = ''
+        return text
 
-    def __generate_past_kids__(self, key, title=None):
+    def _generate_past_kids(self, key, title=None):
         link = self.db['past'][key]['link']
-        html = ''
+        text = ''
         if link:
             past_date = self.db['past']['date']
             if title is None:
                 title = self.db['past'][key]['title']
-            html += '<p>'
-            html += past_date
-            html += '</p><p><span class="clovercustom" style="font-size: 0.625em;">'
-            html += title
-            html += '</span></p>\n'
-            html += link
-            html += '\n\n'
-        return html
+            text += '<p>'
+            text += past_date
+            text += '</p><p><span class="clovercustom" style="font-size: 0.625em;">'
+            text += title
+            text += '</span></p>\n'
+            text += link
+            text += '\n\n'
+        return text
 
-    def __update_last__(self):
+    def _update_last(self):
         """When build is called, the current database data is moved to 'last'"""
         timestamp = dt.datetime.now().strftime('%m/%d/%Y %H:%M:%S')
         # Update holders, this works because it will be reset in the 'build' if the links match
@@ -652,9 +660,9 @@ class HTML_Generator:
         self.db['last'] = deepcopy(self.db['main'])
         self.db['last']['title'] += ' - ' + deepcopy(self.db['main']['name'])
         self.db['last']['stamp'] = timestamp
-        self.__update_past__()
+        self._update_past()
 
-    def __update_past__(self):
+    def _update_past(self):
         # Update past to current
         self.db['past']['date'] = self.db['service']['date']
         for key in self.db:
@@ -665,15 +673,16 @@ class HTML_Generator:
                 self.db['past'][key]['link'] = self.db[key]['link']
                 self.db['past'][key]['title'] = title
 
-    def __blank__(self, key, timestamp):
-        """Removes data from a key in database"""
+    def _blank(self, key, timestamp):
+        """Removes data from a key in database. Does not remove zoom link"""
         yn = input(f'Remove data from \'{key}\'?  Y/N : ')
         if yn.lower() == 'y':
             for item in self.db[key]:
-                self.db[key][item] = ''
+                if item != 'zoom':
+                    self.db[key][item] = ''
             self.db[key]['stamp'] = timestamp
 
-    def __get_meta__(self, link, lookup, properties):
+    def _get_meta(self, link, lookup, properties):
         print('    Processing metadata...')
         page = urllib.request.urlopen(link)
         soup = BeautifulSoup(page.read(), "html.parser")
@@ -697,7 +706,7 @@ class HTML_Generator:
                             meta_dict[str(p)] = content
         return meta_dict
 
-    def __get_sunday_date__(self, stamp):
+    def _get_sunday_date(self, stamp):
         """Return the date of the nearest upcoming Sunday"""
         days_ahead = 6 - stamp.weekday() # 6 = Sunday
         if days_ahead <= 0:
@@ -706,7 +715,7 @@ class HTML_Generator:
         sunday = sunday.strftime('%B %d, %Y')
         return sunday
 
-    def __format_short__(self, url):
+    def _format_short(self, url):
         """Reformats long YouTube urls to short"""
         slug = url.split('=')[-1]
         return 'https://youtu.be/' + slug
